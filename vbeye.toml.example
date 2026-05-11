@@ -1,0 +1,32 @@
+# vbeye konfigurációs fájl
+#
+# Másold át valamelyik helyre:
+#   - ./vbeye.toml            (projekt-szintű)
+#   - ~/.config/vbeye/config.toml  (felhasználói default)
+#   - ~/.vbeye.toml           (felhasználói fallback)
+#
+# Vagy explicit megadva:  vbeye target.hu --docx --config /path/to/vbeye.toml
+
+[branding]
+company_name = "Your Company Kft."
+author       = "Security Auditor"
+email        = "info@example.com"
+website      = "https://example.com"
+logo_path    = ""   # opcionális — későbbi verzióhoz
+
+# Színek hex formátumban (# nélkül). A jelentés tipográfiájához.
+color_primary  = "0B1E3F"  # navy — címek, fejlécek
+color_accent   = "00B4D8"  # cyan — aláhúzások, subtitle
+color_border   = "C9A227"  # gold — felső dekoratív sáv
+color_body     = "2B2B2B"  # body text
+color_meta     = "6B7280"  # meta info, lábléc
+color_critical = "B00020"  # piros — D/E/F grade, kritikus elemek
+
+[defaults]
+industry          = "vállalat"
+compliance        = "GDPR és NIS2"
+price_offer1      = "100 000 – 180 000 Ft + ÁFA"
+duration_offer1   = "2–4 munkanap"
+duration_offer2   = "4–8 hét"
+price_offer2      = "A végleges költség a jelenlegi rendszer állapotától és a szükséges beavatkozás mértékétől függ"
+scan_source       = "securityheaders.com"

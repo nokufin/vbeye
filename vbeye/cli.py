@@ -42,12 +42,12 @@ BANNER = r"""
 """
 
 AUTHOR = "theEreb0x"
-SUBTITLE = "Public Recon & Security Scanner"
+SUBTITLE = "Passive Web Security Assessment Tool"
 
 
 def _print_banner(console: Console, target: str) -> None:
     console.print(f"[bold cyan]{BANNER}[/]")
-    console.print(f"[bold]VBEye v{__version__}-alpha[/]")
+    console.print(f"[bold]VBEye v{__version__}[/]")
     console.print(f"[dim]{SUBTITLE}[/]\n")
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     console.print(rf"[green]\[INFO][/] Author: [bold]{AUTHOR}[/]")
@@ -140,7 +140,7 @@ def main() -> int:
     docx_group.add_argument("--compliance", help="Vonatkozó megfelelőségi keret (pl. 'GDPR és NIS2', 'PCI-DSS')")
     docx_group.add_argument("--price", help="Ajánlat 1 irányár (üres string a kihagyáshoz)")
     docx_group.add_argument("--duration", help="Ajánlat 1 időtartam")
-    docx_group.add_argument("--scan-source", help="Scan forrás megjelölése a táblázatban (default: 'securityheaders.com')")
+    docx_group.add_argument("--scan-source", help="Scan forrás megjelölése a táblázatban (default: 'vbeye')")
 
     parser.add_argument("-v", "--version", action="version", version=f"vbeye {__version__}")
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 from datetime import datetime
 
+from vbeye import __version__
 from vbeye.scoring import CheckerResult, Severity, compute_score
 
 
@@ -219,7 +220,8 @@ def build_html(target: str, results: list[CheckerResult]) -> str:
   {sections}
 </main>
 <footer>
-  Generálta: vbeye · scoring: 100 - súlyozott találat-büntetés (max 0)
+  Generated with <strong>vbeye v{__version__}</strong> — Passive Web Security Assessment Tool<br>
+  Developed by theEreb0x · scoring: 100 - súlyozott találat-büntetés (max 0)
 </footer>
 </body>
 </html>

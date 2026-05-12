@@ -45,7 +45,7 @@ class Defaults:
     duration_offer1: str = "2–4 munkanap"
     duration_offer2: str = "4–8 hét"
     price_offer2: str = "A végleges költség a jelenlegi rendszer állapotától és a szükséges beavatkozás mértékétől függ"
-    scan_source: str = "securityheaders.com"
+    scan_source: str = "vbeye"
 
 
 @dataclass

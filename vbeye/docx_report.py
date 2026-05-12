@@ -23,7 +23,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import Pt, RGBColor, Cm
 
-from vbeye import phrases
+from vbeye import __version__, phrases
 from vbeye.config import Config
 from vbeye.scoring import CheckerResult, Severity, compute_score, grade_from_score
 
@@ -431,6 +431,11 @@ def _footer_block(doc, branding) -> None:
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     _add_run(p, f"{branding.email}    ·    {branding.company_name}    ·    {branding.website}",
              color=branding.color_meta, size=8)
+
+    p2 = footer.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _add_run(p2, f"Generated with vbeye v{__version__} — Passive Web Security Assessment Tool · Developed by theEreb0x",
+             color=branding.color_meta, size=7)
 
 
 def build(

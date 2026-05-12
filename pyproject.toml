@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vbeye"
-version = "0.1.0"
+version = "1.0.0"
 description = "Public website security assessment tool (headers, TLS, source) with HTML report"
 readme = "README.md"
 requires-python = ">=3.10"

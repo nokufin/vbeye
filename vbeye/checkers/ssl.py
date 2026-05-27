@@ -144,19 +144,7 @@ def _eval_certificate(sr, result: CheckerResult) -> None:
             )
 
         pub = leaf.public_key()
-        key_size = getattr(pub, "key_size", None)
-        if key_size:
-            result.meta["cert_key_size"] = key_size
-            if key_size < 2048:
-                result.findings.append(
-                    Finding(
-                        "ssl.cert.weak_key",
-                        f"Gyenge kulcsméret: {key_size} bit",
-                        Severity.HIGH,
-                        "Az RSA kulcs mérete a jelenlegi ajánlás alatt van (min. 2048).",
-                        "Generálj 2048+ bites RSA vagy ECDSA P-256 kulcsot.",
-                    )
-                )
+        _eval_public_key(pub, result)
 
     if not dep.verified_certificate_chain:
         result.findings.append(
@@ -179,6 +167,58 @@ def _eval_certificate(sr, result: CheckerResult) -> None:
                 "Adj ki tanúsítványt a megfelelő hostnévre, vagy javítsd a virtual host konfigot.",
             )
         )
+
+
+def _eval_public_key(pub, result: CheckerResult) -> None:
+    from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
+
+    key_size = getattr(pub, "key_size", None)
+    if isinstance(pub, rsa.RSAPublicKey):
+        result.meta["cert_key_type"] = "RSA"
+        result.meta["cert_key_size"] = key_size
+        if key_size and key_size < 2048:
+            result.findings.append(
+                Finding(
+                    "ssl.cert.weak_key",
+                    f"Gyenge RSA kulcsméret: {key_size} bit",
+                    Severity.HIGH,
+                    "Az RSA kulcs mérete a jelenlegi ajánlás alatt van (min. 2048).",
+                    "Generálj 2048+ bites RSA vagy ECDSA P-256 kulcsot.",
+                )
+            )
+    elif isinstance(pub, ec.EllipticCurvePublicKey):
+        curve_name = pub.curve.name
+        result.meta["cert_key_type"] = f"ECDSA ({curve_name})"
+        result.meta["cert_key_size"] = key_size
+        if key_size and key_size < 256:
+            result.findings.append(
+                Finding(
+                    "ssl.cert.weak_key",
+                    f"Gyenge ECDSA görbe: {curve_name} ({key_size} bit)",
+                    Severity.HIGH,
+                    "Az elliptikus görbe a jelenlegi ajánlás alatt van (min. P-256).",
+                    "Cseréld P-256 vagy P-384 görbére.",
+                )
+            )
+    elif isinstance(pub, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+        alg = "Ed25519" if isinstance(pub, ed25519.Ed25519PublicKey) else "Ed448"
+        result.meta["cert_key_type"] = alg
+    elif isinstance(pub, dsa.DSAPublicKey):
+        result.meta["cert_key_type"] = "DSA"
+        result.meta["cert_key_size"] = key_size
+        result.findings.append(
+            Finding(
+                "ssl.cert.dsa_deprecated",
+                "Elavult DSA kulcs",
+                Severity.HIGH,
+                "A DSA aláírási algoritmus elavult, modern böngészők és kliensek nem támogatják megbízhatóan.",
+                "Cseréld RSA 2048+ vagy ECDSA P-256 kulcsra.",
+            )
+        )
+    else:
+        result.meta["cert_key_type"] = type(pub).__name__
+        if key_size is not None:
+            result.meta["cert_key_size"] = key_size
 
 
 def _eval_protocols(sr, result: CheckerResult) -> None:

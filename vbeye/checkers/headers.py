@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import re
+
 import requests
 
 from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
+
+
+VERSION_RE = re.compile(r"\d+\.\d+")
 
 
 USER_AGENT = "vbeye/0.1 (+https://github.com/nokufin/vbeye)"
@@ -176,14 +181,29 @@ def _check_disclosure(h: dict) -> list[Finding]:
     out = []
     for key, label in DISCLOSURE_HEADERS.items():
         v = h.get(key)
-        if v:
+        if not v:
+            continue
+        has_version = bool(VERSION_RE.search(v))
+        if has_version:
             out.append(
                 Finding(
                     f"headers.disclosure.{key}",
                     f"Verziókiadás: {label}",
                     Severity.LOW,
-                    f"A `{label}` fejléc szoftvert/verziót szivárogtat, ami célzott exploit kereséshez használható.",
+                    f"A `{label}` fejléc konkrét verziószámot szivárogtat, ami célzott exploit kereséshez használható.",
                     "Távolítsd el a fejlécet vagy állítsd üresre a reverse proxyban.",
+                    evidence=f"{label}: {v}",
+                    confidence=Confidence.VERIFIED,
+                )
+            )
+        else:
+            out.append(
+                Finding(
+                    f"headers.disclosure.{key}",
+                    f"Szoftver-azonosítás: {label}",
+                    Severity.INFO,
+                    f"A `{label}` fejléc megnevezi a kiszolgáló szoftvert verziószám nélkül. Ez önmagában nem jelent közvetlen kihasználható kockázatot, de felderítést könnyíti.",
+                    "Ha nincs üzemeltetési indok, érdemes a fejlécet eltávolítani vagy semleges értékre cserélni.",
                     evidence=f"{label}: {v}",
                     confidence=Confidence.VERIFIED,
                 )

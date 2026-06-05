@@ -23,6 +23,7 @@ CHECK_ID_TO_HEADER = {
     "headers.csp.weak": "Content-Security-Policy (CSP)",
     "headers.xfo.missing": "X-Frame-Options",
     "headers.xfo.invalid": "X-Frame-Options",
+    "headers.xfo.frame_ancestors_permissive": "X-Frame-Options",
     "headers.xcto.missing": "X-Content-Type-Options",
     "headers.referrer.missing": "Referrer-Policy",
     "headers.referrer.weak": "Referrer-Policy",

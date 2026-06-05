@@ -9,6 +9,22 @@ from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 VERSION_RE = re.compile(r"\d+\.\d+")
 
+FRAME_ANCESTORS_RE = re.compile(r"(?i)frame-ancestors\s+([^;]+)")
+
+# CSP source values that allow ANY origin to embed — these don't protect against clickjacking.
+PERMISSIVE_FA_SOURCES = {"*", "http:", "https:", "ws:", "wss:", "data:", "blob:", "filesystem:"}
+
+
+def _frame_ancestors_protects(value: str) -> bool:
+    tokens = value.lower().split()
+    if not tokens:
+        return False
+    if tokens == ["'none'"]:
+        return True
+    if any(t in PERMISSIVE_FA_SOURCES for t in tokens):
+        return False
+    return True
+
 
 USER_AGENT = "vbeye/0.1 (+https://github.com/nokufin/vbeye)"
 
@@ -103,9 +119,21 @@ def _check_csp(h: dict) -> Finding | None:
 
 
 def _check_xfo(h: dict) -> Finding | None:
-    csp = h.get("content-security-policy", "").lower()
-    if "frame-ancestors" in csp:
-        return None
+    csp = h.get("content-security-policy", "")
+    fa_match = FRAME_ANCESTORS_RE.search(csp)
+    if fa_match:
+        fa_value = fa_match.group(1).strip()
+        if _frame_ancestors_protects(fa_value):
+            return None
+        return Finding(
+            "headers.xfo.frame_ancestors_permissive",
+            "CSP frame-ancestors túl megengedő",
+            Severity.MEDIUM,
+            f"A `frame-ancestors {fa_value}` direktíva engedélyezi tetszőleges origin-ből az iframe beágyazást, így nem ad clickjacking-védelmet.",
+            "Szigorítsd `'none'`, `'self'` vagy konkrét megbízható origin listára.",
+            evidence=f"frame-ancestors {fa_value}",
+            confidence=Confidence.VERIFIED,
+        )
     v = h.get("x-frame-options")
     if not v:
         return Finding(

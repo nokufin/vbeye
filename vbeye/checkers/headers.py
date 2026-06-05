@@ -5,6 +5,7 @@ import re
 import requests
 
 from vbeye import __version__
+from vbeye.cookies import is_likely_session_cookie, iter_set_cookie_headers
 from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 
@@ -250,30 +251,14 @@ def _check_disclosure(h: dict) -> list[Finding]:
     return out
 
 
-SESSION_COOKIE_HINTS = (
-    "session", "sess", "sid", "auth", "token", "jwt",
-    "phpsessid", "jsessionid", "asp.net_sessionid",
-    "connect.sid", "remember", "xsrf", "csrf",
-)
-
-
-def _is_likely_session_cookie(name: str) -> bool:
-    n = name.lower()
-    return any(hint in n for hint in SESSION_COOKIE_HINTS)
-
-
 def _check_cookies(resp: requests.Response) -> list[Finding]:
     out: list[Finding] = []
-    set_cookies = resp.raw.headers.getlist("Set-Cookie") if hasattr(resp.raw.headers, "getlist") else []
-    if not set_cookies:
-        raw = resp.headers.get("set-cookie")
-        if raw:
-            set_cookies = [raw]
+    set_cookies = iter_set_cookie_headers(resp)
     is_https = resp.url.startswith("https://")
     for c in set_cookies:
         lower = c.lower()
         name = c.split("=", 1)[0].strip()
-        is_session = _is_likely_session_cookie(name)
+        is_session = is_likely_session_cookie(name)
 
         # SameSite=None requires Secure (RFC 6265bis) — modern browsers reject the
         # cookie outright otherwise. Treat as a distinct misconfiguration.

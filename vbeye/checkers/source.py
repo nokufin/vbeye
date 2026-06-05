@@ -8,6 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from vbeye import __version__
+from vbeye.cookies import is_likely_session_cookie, iter_set_cookie_headers
 from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 
@@ -141,7 +142,7 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
     _check_comments(html, result)
     _check_secrets(html, result)
     _check_vulnerable_libs(soup, final_url, result)
-    _check_csrf_token_hint(soup, result)
+    _check_csrf_token_hint(soup, resp, result)
 
     if not result.findings:
         result.findings.append(
@@ -383,30 +384,67 @@ def _check_vulnerable_libs(soup: BeautifulSoup, base: str, result: CheckerResult
         )
 
 
-def _check_csrf_token_hint(soup: BeautifulSoup, result: CheckerResult) -> None:
+CSRF_TOKEN_INPUT_NAMES = (
+    "csrf", "_token", "authenticity_token", "xsrf",
+    "csrfmiddlewaretoken",        # Django
+    "__requestverificationtoken", # ASP.NET
+    "csrf_token", "csrf-token",
+)
+
+CSRF_META_NAME_RE = re.compile(
+    r"(?i)^(csrf-token|_csrf|csrf-param|x-csrf-token|csrf|xsrf-token)$"
+)
+
+
+def _check_csrf_token_hint(soup: BeautifulSoup, resp, result: CheckerResult) -> None:
     forms = soup.find_all("form")
     if not forms:
         return
     state_changing = [f for f in forms if (f.get("method") or "GET").upper() == "POST"]
     if not state_changing:
         return
-    has_token = False
+
+    # Signal 1: hidden CSRF token input in any POST form.
     for f in state_changing:
         for inp in f.find_all("input"):
             name = (inp.get("name") or "").lower()
-            if any(k in name for k in ("csrf", "_token", "authenticity_token", "xsrf")):
-                has_token = True
-                break
-        if has_token:
+            if any(k in name for k in CSRF_TOKEN_INPUT_NAMES):
+                return
+
+    # Signal 2: CSRF meta tag (Rails/Laravel/SPA convention; framework JS reads
+    # this and sends X-CSRF-Token header on XHR/fetch).
+    meta = soup.find("meta", attrs={"name": CSRF_META_NAME_RE})
+    if meta and meta.get("content"):
+        return
+
+    # Signal 3: session cookie with SameSite=Strict — browser-level CSRF defense.
+    samesite_strict_session = False
+    for c in iter_set_cookie_headers(resp):
+        lower = c.lower()
+        cookie_name = c.split("=", 1)[0].strip()
+        if is_likely_session_cookie(cookie_name) and "samesite=strict" in lower:
+            samesite_strict_session = True
             break
-    if not has_token:
+
+    if samesite_strict_session:
         result.findings.append(
             Finding(
                 "source.csrf.hint",
-                "Nem látható CSRF token POST űrlapon",
+                "POST űrlap explicit CSRF token nélkül (SameSite=Strict jelenléte mellett)",
+                Severity.INFO,
+                "A POST űrlapokon nincs explicit CSRF token input vagy meta-tag, de a session cookie SameSite=Strict beállítása böngészőszintű CSRF-védelmet ad. A hiányzó explicit token feltehetően szándékos.",
+                "Megerősítésként ellenőrizd, hogy a backend valódi state-changing endpointoknál is támaszkodik-e a SameSite-ra, és van-e Origin/Referer-ellenőrzés mint védelmi réteg.",
+                confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
+            )
+        )
+    else:
+        result.findings.append(
+            Finding(
+                "source.csrf.hint",
+                "Nem látható explicit CSRF védelem POST űrlapon",
                 Severity.LOW,
-                "A POST űrlapokon nem találtam tipikus CSRF token mezőt. Lehet, hogy header/cookie alapú a védelem — kézi ellenőrzés kell.",
-                "Ellenőrizd hogy van CSRF védelem (token vagy SameSite=Strict cookie + origin check).",
+                "A POST űrlapokon nem találtam sem CSRF token input mezőt, sem CSRF meta-tag-et, és a session cookie sem SameSite=Strict. Modern frameworkök (Django, Rails, Laravel, ASP.NET) jellemzően explicit tokent használnak; SPA-k pedig X-CSRF-Token headeren küldenek.",
+                "Kézi validáció: nyisd meg az oldalt és ellenőrizd, hogy a backend Origin/Referer-ellenőrzést, header-alapú vagy session-szinkron tokent használ-e. Ha semmi: vezess be CSRF tokent vagy SameSite=Strict session cookie-t.",
                 confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
         )

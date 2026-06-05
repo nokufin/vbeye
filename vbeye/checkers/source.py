@@ -7,10 +7,17 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from vbeye import __version__
 from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 
-USER_AGENT = "vbeye/0.1"
+USER_AGENT = f"vbeye/{__version__} (+https://github.com/nokufin/vbeye)"
+
+REQUEST_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "hu-HU,hu;q=0.9,en;q=0.8",
+}
 
 # Format-specific patterns — high precision, low false-positive rate.
 HIGH_CONFIDENCE_SECRETS = [
@@ -114,7 +121,7 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
             url,
             timeout=timeout,
             allow_redirects=True,
-            headers={"User-Agent": USER_AGENT},
+            headers=REQUEST_HEADERS,
         )
     except requests.RequestException as e:
         result.error = f"HTTP lekérés sikertelen: {e}"

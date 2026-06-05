@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from urllib.parse import urljoin, urlparse
 
@@ -11,23 +12,72 @@ from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 USER_AGENT = "vbeye/0.1"
 
-SECRET_PATTERNS = [
+# Format-specific patterns — high precision, low false-positive rate.
+HIGH_CONFIDENCE_SECRETS = [
     ("AWS access key", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("Google API key", re.compile(r"AIza[0-9A-Za-z\-_]{35}")),
     ("Slack token", re.compile(r"xox[abprs]-[0-9A-Za-z\-]{10,}")),
-    ("Private RSA key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----")),
-    ("JWT", re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
-    ("Bearer token", re.compile(r"(?i)bearer\s+[A-Za-z0-9\-_\.]{20,}")),
-    ("Generic API key assign", re.compile(r"(?i)(api[_-]?key|apikey|secret|token)\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]")),
+    ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----")),
+    ("JWT", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
+    ("GitHub PAT", re.compile(r"\bghp_[A-Za-z0-9]{36}\b")),
+    ("Stripe secret key", re.compile(r"\bsk_(?:test|live)_[A-Za-z0-9]{24,}\b")),
 ]
 
+# Heuristic generic-secret pattern — produces a separate, lower-confidence finding.
+GENERIC_SECRET_RE = re.compile(
+    r"""(?ix)
+    \b(api[_-]?key|api[_-]?secret|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key)
+    \s*[:=]\s*
+    ['"]([A-Za-z0-9+/=_\-\.]{20,})['"]
+    """
+)
+
+PLACEHOLDER_RE = re.compile(
+    r"^(your[-_ ]?|example[-_ ]?|test[-_ ]?|demo[-_ ]?|sample[-_ ]?|placeholder|xxx+|\.\.\.|<.+>|\{.+\})",
+    re.IGNORECASE,
+)
+
+# HTML comments injected by common tooling — these are noise, not leaks.
+COMMENT_NOISE_RE = re.compile(
+    r"(?ix)"
+    r"(google\s*tag\s*manager|gtm\.start|googletagmanager|"
+    r"cloudflare|rocket[\s\-_]?loader|wp[\s\-_]?rocket|cf[\s\-_]?cache|"
+    r"google[\s\-_]?analytics|gtag\(|hotjar|facebook\s*pixel|"
+    r"cookieconsent|onetrust|usercentrics|"
+    r"yoast\s*seo|all\s*in\s*one\s*seo|jetpack|"
+    r"page\s*generated\s*in|"
+    r"<!\[endif\]|\[if\s+(?:lt\s+)?IE)"
+)
+
+# Only structured patterns trigger a finding — substrings like "password manager"
+# or "rocket-loader debug=" must not match.
 COMMENT_LEAK_PATTERNS = [
-    re.compile(r"(?i)\b(todo|fixme|hack|xxx)\b"),
-    re.compile(r"(?i)password|passwd|pwd"),
-    re.compile(r"(?i)credential"),
-    re.compile(r"(?i)internal\s+only"),
-    re.compile(r"(?i)debug"),
+    re.compile(r"(?i)\bTODO\s*[:\-]"),
+    re.compile(r"(?i)\bFIXME\s*[:\-]"),
+    re.compile(r"(?i)\bHACK\s*[:\-]"),
+    re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]"),
+    re.compile(r"(?i)\b(credential|api[_-]?key|api[_-]?token|secret|bearer|access[_-]?token)\s*[:=]"),
+    re.compile(r"(?i)\binternal\s+(only|use|api|debug|note)\b"),
+    re.compile(r"(?i)\b(stacktrace|traceback|stack\s+trace)\b"),
+    re.compile(r"(?i)\bdebug\s*[:=]\s*true\b"),
 ]
+
+
+def _shannon_entropy(s: str) -> float:
+    if not s:
+        return 0.0
+    freq = {c: s.count(c) / len(s) for c in set(s)}
+    return -sum(p * math.log2(p) for p in freq.values())
+
+
+def _looks_like_real_secret(value: str) -> bool:
+    if len(value) < 20:
+        return False
+    if PLACEHOLDER_RE.match(value):
+        return False
+    if re.fullmatch(r"[A-Z0-9_]{1,40}", value):
+        return False
+    return _shannon_entropy(value) >= 4.0
 
 VULNERABLE_LIBS = {
     "jquery": [
@@ -230,6 +280,8 @@ def _check_comments(html: str, result: CheckerResult) -> None:
         s = c.strip()
         if not s:
             continue
+        if COMMENT_NOISE_RE.search(s):
+            continue
         for pat in COMMENT_LEAK_PATTERNS:
             if pat.search(s):
                 leaks.append(s[:200])
@@ -242,8 +294,8 @@ def _check_comments(html: str, result: CheckerResult) -> None:
                 "source.comments.leak",
                 "Gyanús HTML-kommentek",
                 Severity.LOW,
-                f"{len(leaks)} komment érzékeny kulcsszavakat tartalmaz (TODO, password, internal, debug...). Lehet, hogy belső infó szivárgott.",
-                "Távolítsd el a kommenteket build során (pl. HTML minifier), és ne tarts production-ben fejlesztői megjegyzést.",
+                f"{len(leaks)} komment strukturált, érzékeny mintát tartalmaz (TODO:, password:, internal use, stacktrace...). Belső fejlesztői infó szivároghatott.",
+                "Távolítsd el a kommenteket build során (HTML minifier), és ne tarts production-ben fejlesztői megjegyzést.",
                 evidence="\n---\n".join(leaks),
                 confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
@@ -251,22 +303,45 @@ def _check_comments(html: str, result: CheckerResult) -> None:
 
 
 def _check_secrets(html: str, result: CheckerResult) -> None:
-    hits = []
-    for label, pat in SECRET_PATTERNS:
+    verified_hits = []
+    for label, pat in HIGH_CONFIDENCE_SECRETS:
         for m in pat.finditer(html):
             snippet = m.group(0)
-            hits.append(f"{label}: {snippet[:60]}{'…' if len(snippet) > 60 else ''}")
-            if len(hits) >= 15:
+            verified_hits.append(f"{label}: {snippet[:60]}{'…' if len(snippet) > 60 else ''}")
+            if len(verified_hits) >= 15:
                 break
-    if hits:
+    if verified_hits:
         result.findings.append(
             Finding(
                 "source.secret.exposed",
-                "Titoknak tűnő minta a HTML-ben",
+                "Konkrét formátumú titok a HTML-ben",
                 Severity.CRITICAL,
-                "A kiszolgált tartalomban API kulcsra / privát kulcsra / tokenre illeszkedő minta található. Ha valódi, azonnal rotálandó.",
-                "Vizsgáld meg, hogy valódi titok-e. Ha igen, rotáld, és tedd backendbe / env változóba.",
-                evidence="\n".join(hits),
+                "A kiszolgált tartalom formátum-specifikus titok-mintát tartalmaz (AWS / Google / Slack / GitHub / Stripe kulcs vagy PEM private key block). Azonnal rotálandó, ha valódi.",
+                "Rotáld a kulcsot, töröld a HTML-ből, mozgasd backendbe / env változóba.",
+                evidence="\n".join(verified_hits),
+                confidence=Confidence.VERIFIED,
+            )
+        )
+
+    generic_hits = []
+    for m in GENERIC_SECRET_RE.finditer(html):
+        key_name = m.group(1)
+        value = m.group(2)
+        if not _looks_like_real_secret(value):
+            continue
+        snippet = m.group(0)
+        generic_hits.append(f"{key_name}: {snippet[:80]}{'…' if len(snippet) > 80 else ''}")
+        if len(generic_hits) >= 10:
+            break
+    if generic_hits:
+        result.findings.append(
+            Finding(
+                "source.secret.generic_hint",
+                "Generic key=érték minta a HTML-ben",
+                Severity.HIGH,
+                f"{len(generic_hits)} darab `{{kulcsnév}}: \"...\"` mintát találtam, ami valódi titok is lehet, de lehet konfiguráció / placeholder is. Entrópiaszűrés átengedte.",
+                "Kézi validáció: nyisd meg az oldalt, és ellenőrizd hogy a megjelölt érték valós titok-e. Ha igen, rotáld; ha nem, ignore.",
+                evidence="\n".join(generic_hits),
                 confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
         )

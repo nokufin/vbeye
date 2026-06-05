@@ -24,9 +24,13 @@ def _norm(headers: dict) -> dict:
     return {k.lower(): v for k, v in headers.items()}
 
 
-def _check_hsts(h: dict) -> Finding | None:
+def _check_hsts(h: dict, is_https: bool) -> Finding | None:
     v = h.get("strict-transport-security")
     if not v:
+        if not is_https:
+            # HSTS HTTP-n értelmetlen — a böngészők figyelmen kívül hagyják.
+            # A no_https_redirect finding már lefedi a tényleges kockázatot.
+            return None
         return Finding(
             "headers.hsts.missing",
             "HSTS hiányzik",
@@ -276,7 +280,13 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
         )
 
     h = _norm(resp.headers)
-    for check in (_check_hsts, _check_csp, _check_xfo, _check_xcto, _check_referrer, _check_permissions):
+    is_https_final = resp.url.startswith("https://")
+
+    hsts_finding = _check_hsts(h, is_https_final)
+    if hsts_finding:
+        result.findings.append(hsts_finding)
+
+    for check in (_check_csp, _check_xfo, _check_xcto, _check_referrer, _check_permissions):
         f = check(h)
         if f:
             result.findings.append(f)

@@ -251,9 +251,7 @@ def _executive_summary(doc, branding, *, host: str, grade: str, info: dict, indu
     if grade in ("C", "D", "E", "F"):
         _add_paragraph(doc, phrases.EXECUTIVE_SUMMARY_TEMPLATE["risk_framing"], color=branding.color_body)
 
-    industry_text = phrases.EXECUTIVE_SUMMARY_TEMPLATE["industry_template"].format(
-        industry=industry, compliance=compliance
-    )
+    industry_text = phrases.resolve_industry_context(industry, compliance)
     _add_paragraph(doc, industry_text, color=branding.color_body)
 
 

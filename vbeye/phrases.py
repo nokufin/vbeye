@@ -215,6 +215,75 @@ CORS_SECTION = {
 }
 
 
+INDUSTRY_BUSINESS_CONTEXT = {
+    "hotel": (
+        "Egy szálláshely-szolgáltató esetében a webhely biztonsági állapota közvetlenül hat "
+        "a foglalási bizalomra: a böngészők biztonsági figyelmeztetése, az értékelő- és OTA-platformokon "
+        "megjelenő publikus információk, vagy egy észlelt incidens mérhetően csökkenti a direkt "
+        "foglalások konverziós arányát. A {compliance} keretrendszer szempontjából a vendégadatok "
+        "(név, kapcsolattartás, fizetési előinformáció) kezelése a feltárt konfiguráció mellett "
+        "nem dokumentálható egyértelműen megfelelőnek."
+    ),
+    "ipari": (
+        "Egy gyártó / ipari vállalkozás esetében a publikus webhely tipikusan beszállítói és partneri "
+        "átvilágítási folyamatok ellenőrzési pontja. A nagyobb megrendelők (autóipar, energetikai "
+        "szektor, orvosi eszközgyártás) ISO 27001 / IATF 16949 audit során dokumentált "
+        "webhely-állapotot várnak el; a feltárt hiányosságok ilyen kontextusban formális kockázati "
+        "pontokká válhatnak. A {compliance} elvárások emellett vonatkoznak a webhelyen kezelt "
+        "B2B kapcsolattartási és ajánlatkérési (RFQ) adatokra is."
+    ),
+    "onkormanyzat": (
+        "Egy önkormányzat / közintézmény esetében a webhely a lakossági szolgáltatások egyik "
+        "nyilvános interfésze. Egy észlelhető biztonsági hiányosság kettős hatású: rontja a "
+        "lakossági bizalmat a digitális ügyintézés irányában, és felveti a felelős adatkezelés "
+        "kérdését. A {compliance} keretrendszer és a NIS2 irányelv által érintett szervezetek "
+        "esetén a feltárt hiányosságok formális audit során dokumentálandóak, és a javító "
+        "intézkedések ütemezetten elvárhatók."
+    ),
+    "wordpress_kkv": (
+        "Egy WordPress-alapú KKV-webhely esetében a leggyakoribb operatív kockázat nem célzott "
+        "támadás, hanem automatizált, tömeges visszaélés: SEO-spam injection a forrásba, a "
+        "domain-ről történő levélkliens-visszaélés (SMTP abuse), vagy a látogatók átirányítása "
+        "adat-halászati landing oldalra. Ezek a problémák a webhely-tulajdonos számára gyakran "
+        "nehezen detektálhatók, mert a normál látogatói oldalmegjelenés változatlan marad. "
+        "A {compliance} elvárások szempontjából egy kompromittált oldal a látogatói adatok "
+        "jogosulatlan kezeléséhez vezethet."
+    ),
+}
+
+
+# Sector classification by free-form `--industry` value. Order: most specific first.
+# Substring match on the lowercased user input.
+INDUSTRY_KEYWORDS = (
+    ("hotel",         ("hotel", "szálloda", "szallodá", "panzió", "panzio",
+                       "vendégház", "vendeghaz", "vendéglátás", "vendeglatas",
+                       "apartman", "bnb", "airbnb")),
+    ("onkormanyzat",  ("önkormányzat", "onkormanyzat", "közintézmén", "kozintezmen",
+                       "hivatal", "minisztérium", "miniszterium", "közigazgatá",
+                       "kozigazga", "állami", "allami", "kormány", "kormany")),
+    ("ipari",         ("ipari", "gyártó", "gyarto", "gyár", "gyar", "üzem", "uzem",
+                       "termelő", "termelo", "beszállító", "beszallito", "b2b",
+                       "iatf", "automotive", "autóipar", "autoipar")),
+    ("wordpress_kkv", ("wordpress", "wp ", "wp-", "kkv", "kisvállalkozá", "kisvallalkoza",
+                       "kis- és középvál", "kis es kozepval", "egyéni vállalkoz",
+                       "egyeni vallalkoz")),
+)
+
+
+def resolve_industry_context(industry: str | None, compliance: str) -> str:
+    """Return a sector-specific business-context paragraph, falling back to
+    the generic industry_template when no sector keyword matches."""
+    if industry:
+        low = industry.lower()
+        for sector, keywords in INDUSTRY_KEYWORDS:
+            if any(k in low for k in keywords):
+                return INDUSTRY_BUSINESS_CONTEXT[sector].format(compliance=compliance)
+    return EXECUTIVE_SUMMARY_TEMPLATE["industry_template"].format(
+        industry=industry or "vállalat",
+        compliance=compliance,
+    )
+
+
 EXECUTIVE_SUMMARY_TEMPLATE = {
     "intro": "A {host} webhely a független biztonsági szkennelés során „{grade}\" minősítést kapott.",
     "intro_findings_summary": {

@@ -25,7 +25,7 @@ from docx.shared import Pt, RGBColor, Cm
 
 from vbeye import __version__, phrases
 from vbeye.config import Config
-from vbeye.scoring import CheckerResult, Severity, compute_score, grade_from_score
+from vbeye.scoring import CONFIDENCE_LABEL, CheckerResult, Confidence, Severity, compute_score, grade_from_score
 
 
 def _rgb(hex_str: str) -> RGBColor:
@@ -98,7 +98,7 @@ def _add_subsection_heading(doc, text: str, branding) -> None:
     _add_run(p, text, bold=True, color=branding.color_primary, size=12)
 
 
-def _add_bullet(doc, label: str, body: str, branding) -> None:
+def _add_bullet(doc, label: str, body: str, branding, confidence: Confidence | None = None) -> None:
     p = doc.add_paragraph(style="List Bullet")
     p.paragraph_format.space_after = Pt(3)
     p.paragraph_format.line_spacing = 1.2
@@ -107,6 +107,22 @@ def _add_bullet(doc, label: str, body: str, branding) -> None:
         _add_run(p, f"– {body}", color=branding.color_body)
     else:
         _add_run(p, body, color=branding.color_body)
+    if confidence is not None and confidence != Confidence.VERIFIED:
+        marker = f"  ⟨{CONFIDENCE_LABEL[confidence]}⟩"
+        r = _add_run(p, marker, color=branding.color_meta, size=8)
+        r.italic = True
+
+
+def _add_validation_legend(doc, branding) -> None:
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(6)
+    _add_run(p, "Validation szintek: ", bold=True, color=branding.color_meta, size=8)
+    _add_run(p,
+             "VERIFIED – közvetlen, megerősített megfigyelés;  "
+             "STRONG INDICATOR – erős jel, kiegészítő megerősítéssel pontosítható;  "
+             "KÉZI ELLENŐRZÉS SZÜKSÉGES – heurisztika, kézi validáció szükséges.",
+             color=branding.color_meta, size=8)
 
 
 def _add_title_block(doc, branding) -> None:
@@ -308,9 +324,9 @@ def _section_2_adaptive(doc, branding, info: dict, results: list[CheckerResult])
             seen.add(f.check_id)
             text = sec["bullets"].get(f.check_id)
             if text:
-                _add_bullet(doc, "", text, branding)
+                _add_bullet(doc, "", text, branding, confidence=f.confidence)
             else:
-                _add_bullet(doc, f.title, f.description, branding)
+                _add_bullet(doc, f.title, f.description, branding, confidence=f.confidence)
         _add_paragraph(doc, sec["closer"], color=branding.color_body)
 
     if info["flags"]["disclosure"]:
@@ -320,7 +336,7 @@ def _section_2_adaptive(doc, branding, info: dict, results: list[CheckerResult])
         for f in info["by_check"]:
             if f.startswith("headers.disclosure."):
                 for finding in info["by_check"][f]:
-                    _add_bullet(doc, "", f"{finding.title} – {finding.evidence}", branding)
+                    _add_bullet(doc, "", f"{finding.title} – {finding.evidence}", branding, confidence=finding.confidence)
         _add_paragraph(doc, sec["closer"], color=branding.color_body)
 
     source_findings = [
@@ -339,9 +355,9 @@ def _section_2_adaptive(doc, branding, info: dict, results: list[CheckerResult])
             seen.add(f.check_id)
             text = sec["bullets"].get(f.check_id)
             if text:
-                _add_bullet(doc, "", text, branding)
+                _add_bullet(doc, "", text, branding, confidence=f.confidence)
             else:
-                _add_bullet(doc, f.title, f.description, branding)
+                _add_bullet(doc, f.title, f.description, branding, confidence=f.confidence)
         _add_paragraph(doc, sec["closer"], color=branding.color_body)
 
     return next_num
@@ -501,6 +517,7 @@ def build(
                        industry=industry, compliance=compliance)
 
     _add_section_heading(doc, "2. Technikai megállapítások", branding)
+    _add_validation_legend(doc, branding)
     _section_2_headers(doc, branding, info)
     _section_2_adaptive(doc, branding, info, results)
 

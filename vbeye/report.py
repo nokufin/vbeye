@@ -4,7 +4,7 @@ import html
 from datetime import datetime
 
 from vbeye import __version__
-from vbeye.scoring import CheckerResult, Severity, compute_score
+from vbeye.scoring import CONFIDENCE_LABEL, CheckerResult, Confidence, Severity, compute_score
 
 
 SEVERITY_ORDER = [
@@ -100,6 +100,14 @@ main { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
 .sev-low      { background: #ca8a04; color: white; }
 .sev-info     { background: #6b7280; color: white; }
 .sev-ok       { background: #16a34a; color: white; }
+.conf-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+  border: 1px solid; background: white;
+}
+.conf-verified                     { color: #15803d; border-color: #86efac; background: #f0fdf4; }
+.conf-strong_indicator             { color: #1d4ed8; border-color: #93c5fd; background: #eff6ff; }
+.conf-requires_manual_validation   { color: #92400e; border-color: #fcd34d; background: #fffbeb; }
 .error-banner {
   padding: 12px 20px; background: #fef2f2; color: #991b1b;
   border-left: 3px solid #dc2626; font-size: 13px;
@@ -138,10 +146,17 @@ def _section_html(r: CheckerResult) -> str:
     for f in findings:
         rec = f'<div class="finding-rec"><strong>Javaslat:</strong> {_esc(f.recommendation)}</div>' if f.recommendation else ""
         ev = f'<div class="finding-evidence">{_esc(f.evidence)}</div>' if f.evidence else ""
+        conf_html = ""
+        if f.severity != Severity.OK:
+            conf_html = (
+                f'<span class="conf-tag conf-{f.confidence.value}" '
+                f'title="Validation level">{CONFIDENCE_LABEL[f.confidence]}</span>'
+            )
         body.append(
             f'<div class="finding">'
             f'  <div class="finding-head">'
             f'    <span class="sev-tag {_severity_class(f.severity)}">{SEVERITY_LABEL[f.severity]}</span>'
+            f'    {conf_html}'
             f'    <span class="finding-title">{_esc(f.title)}</span>'
             f'    <span class="finding-id">{_esc(f.check_id)}</span>'
             f'  </div>'
@@ -192,6 +207,15 @@ def build_html(target: str, results: list[CheckerResult]) -> str:
     sections = "\n".join(_section_html(r) for r in results)
     grade_color = GRADE_COLOR.get(grade, "#6b7280")
 
+    legend = (
+        '<div class="summary" style="font-size:12px;color:#374151;">'
+        '<strong>Validation szintek:</strong>&nbsp;'
+        '<span class="conf-tag conf-verified">VERIFIED</span> közvetlen, megerősített megfigyelés &nbsp;·&nbsp;'
+        '<span class="conf-tag conf-strong_indicator">STRONG INDICATOR</span> erős jel, de nem közvetlen bizonyíték &nbsp;·&nbsp;'
+        '<span class="conf-tag conf-requires_manual_validation">KÉZI ELLENŐRZÉS SZÜKSÉGES</span> heurisztika, kézi vizsgálat szükséges'
+        '</div>'
+    )
+
     return f"""<!doctype html>
 <html lang="hu">
 <head>
@@ -217,6 +241,7 @@ def build_html(target: str, results: list[CheckerResult]) -> str:
   <div class="summary">
     {"".join(pills)}
   </div>
+  {legend}
   {sections}
 </main>
 <footer>

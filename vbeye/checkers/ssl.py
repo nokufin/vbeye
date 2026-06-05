@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from vbeye.scoring import CheckerResult, Finding, Severity
+from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 
 def _parse_host_port(url: str) -> tuple[str, int]:
@@ -26,6 +26,7 @@ def run(url: str, timeout: int = 15) -> CheckerResult:
                 Severity.CRITICAL,
                 "A célpont HTTP-n érhető el, nincs TLS — minden forgalom titkosítatlan.",
                 "Telepíts érvényes tanúsítványt és kényszerítsd a HTTPS használatát.",
+                confidence=Confidence.VERIFIED,
             )
         )
         return result
@@ -88,6 +89,7 @@ def run(url: str, timeout: int = 15) -> CheckerResult:
                 "TLS konfiguráció rendben",
                 Severity.OK,
                 "Nem találtam ismert TLS-szintű hiányosságot.",
+                confidence=Confidence.VERIFIED,
             )
         )
 
@@ -120,6 +122,8 @@ def _eval_certificate(sr, result: CheckerResult) -> None:
                     Severity.CRITICAL,
                     f"A tanúsítvány lejárt {abs(days_left)} napja ({not_after.date()}).",
                     "Újítsd meg azonnal (pl. Let's Encrypt + automatikus renew).",
+                    evidence=f"notAfter: {not_after.isoformat()}",
+                    confidence=Confidence.VERIFIED,
                 )
             )
         elif days_left < 14:
@@ -130,6 +134,8 @@ def _eval_certificate(sr, result: CheckerResult) -> None:
                     Severity.HIGH,
                     f"A tanúsítvány {days_left} nap múlva lejár.",
                     "Indítsd a megújítást, ellenőrizd az automatikus renew folyamatot.",
+                    evidence=f"notAfter: {not_after.isoformat()}",
+                    confidence=Confidence.VERIFIED,
                 )
             )
         elif days_left < 30:
@@ -140,6 +146,8 @@ def _eval_certificate(sr, result: CheckerResult) -> None:
                     Severity.MEDIUM,
                     f"A tanúsítvány {days_left} nap múlva lejár.",
                     "Tervezd a megújítást.",
+                    evidence=f"notAfter: {not_after.isoformat()}",
+                    confidence=Confidence.VERIFIED,
                 )
             )
 
@@ -154,6 +162,7 @@ def _eval_certificate(sr, result: CheckerResult) -> None:
                 Severity.HIGH,
                 "A tanúsítványlánc nem ellenőrizhető a böngészők megbízható CA store-jával (self-signed vagy hibás közbenső CA).",
                 "Telepítsd a közbenső CA tanúsítványokat, vagy szerezz be nyilvános CA-tól újat.",
+                confidence=Confidence.VERIFIED,
             )
         )
 
@@ -165,6 +174,7 @@ def _eval_certificate(sr, result: CheckerResult) -> None:
                 Severity.HIGH,
                 "A tanúsítvány Subject/SAN mezője nem fedi a vizsgált hostnevet.",
                 "Adj ki tanúsítványt a megfelelő hostnévre, vagy javítsd a virtual host konfigot.",
+                confidence=Confidence.VERIFIED,
             )
         )
 
@@ -184,6 +194,8 @@ def _eval_public_key(pub, result: CheckerResult) -> None:
                     Severity.HIGH,
                     "Az RSA kulcs mérete a jelenlegi ajánlás alatt van (min. 2048).",
                     "Generálj 2048+ bites RSA vagy ECDSA P-256 kulcsot.",
+                    evidence=f"RSA {key_size} bit",
+                    confidence=Confidence.VERIFIED,
                 )
             )
     elif isinstance(pub, ec.EllipticCurvePublicKey):
@@ -198,6 +210,8 @@ def _eval_public_key(pub, result: CheckerResult) -> None:
                     Severity.HIGH,
                     "Az elliptikus görbe a jelenlegi ajánlás alatt van (min. P-256).",
                     "Cseréld P-256 vagy P-384 görbére.",
+                    evidence=f"ECDSA curve={curve_name}, {key_size} bit",
+                    confidence=Confidence.VERIFIED,
                 )
             )
     elif isinstance(pub, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
@@ -213,6 +227,8 @@ def _eval_public_key(pub, result: CheckerResult) -> None:
                 Severity.HIGH,
                 "A DSA aláírási algoritmus elavult, modern böngészők és kliensek nem támogatják megbízhatóan.",
                 "Cseréld RSA 2048+ vagy ECDSA P-256 kulcsra.",
+                evidence=f"DSA {key_size} bit",
+                confidence=Confidence.VERIFIED,
             )
         )
     else:
@@ -240,6 +256,7 @@ def _eval_protocols(sr, result: CheckerResult) -> None:
                     sev,
                     f"A szerver elfogadja a {label} protokollt, amiben ismert kriptográfiai hibák vannak (pl. POODLE, BEAST).",
                     f"Tiltsd le a {label}-t, csak TLS 1.2 és 1.3 maradjon.",
+                    confidence=Confidence.VERIFIED,
                 )
             )
 
@@ -261,6 +278,7 @@ def _eval_protocols(sr, result: CheckerResult) -> None:
                 Severity.CRITICAL,
                 "Sem TLS 1.2, sem TLS 1.3 nincs engedélyezve.",
                 "Engedélyezd a TLS 1.2-t és 1.3-at.",
+                confidence=Confidence.VERIFIED,
             )
         )
 
@@ -279,6 +297,8 @@ def _eval_protocols(sr, result: CheckerResult) -> None:
                     Severity.HIGH,
                     f"A TLS 1.2 rétegen gyenge cipher-ek elérhetők: {', '.join(weak[:5])}{'…' if len(weak) > 5 else ''}",
                     "Tiltsd le az RC4, 3DES, NULL, EXPORT és anon cipher suite-eket.",
+                    evidence="\n".join(weak[:10]),
+                    confidence=Confidence.VERIFIED,
                 )
             )
 

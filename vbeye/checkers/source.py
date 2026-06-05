@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from vbeye.scoring import CheckerResult, Finding, Severity
+from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 
 USER_AGENT = "vbeye/0.1"
@@ -93,6 +93,7 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
                 "Forráskód-elemzés rendben",
                 Severity.OK,
                 "A nyilvánosan visszaadott HTML-ben nem találtam tipikus hibákat.",
+                confidence=Confidence.VERIFIED,
             )
         )
     return result
@@ -116,6 +117,7 @@ def _check_mixed_content(soup: BeautifulSoup, base: str, is_https: bool, result:
                 f"{len(mixed)} darab HTTP erőforrás a HTTPS oldalon. A böngészők blokkolják vagy figyelmeztetnek; MITM esetén injektálható.",
                 "Cseréld a HTTP URL-eket HTTPS-re, vagy használj protokoll-relatív URL-t.",
                 evidence="\n".join(mixed[:10]),
+                confidence=Confidence.VERIFIED,
             )
         )
 
@@ -135,6 +137,7 @@ def _check_external_scripts_sri(soup: BeautifulSoup, base: str, result: CheckerR
                 f"{len(missing)} külső script SRI integrity hash nélkül töltődik be. Ha a CDN kompromittálódik, tetszőleges kódot injektálhat.",
                 "Adj `integrity` attribútumot minden külső script/style tag-nek, és `crossorigin` megfelelő értékkel.",
                 evidence="\n".join(missing[:10]),
+                confidence=Confidence.STRONG_INDICATOR,
             )
         )
 
@@ -153,6 +156,7 @@ def _check_form_security(soup: BeautifulSoup, base: str, is_https: bool, result:
                     f"A form `{action}` HTTP-n keresztül küld adatot — minden mező látható a hálózaton.",
                     "Cseréld HTTPS action-re.",
                     evidence=str(form)[:300],
+                    confidence=Confidence.VERIFIED,
                 )
             )
         # password mező nem-HTTPS oldalon
@@ -164,6 +168,7 @@ def _check_form_security(soup: BeautifulSoup, base: str, is_https: bool, result:
                     Severity.CRITICAL,
                     "Az oldal nem HTTPS, de password input van — a jelszó tisztán fog átmenni a hálózaton.",
                     "Töltsd be az űrlapot HTTPS-en, és a POST action is HTTPS legyen.",
+                    confidence=Confidence.VERIFIED,
                 )
             )
         # autocomplete=off password mezőn — info-szintű
@@ -176,6 +181,7 @@ def _check_form_security(soup: BeautifulSoup, base: str, is_https: bool, result:
                     Severity.INFO,
                     "Az autocomplete=off password mezőn rontja a jelszókezelők használatát, gyengébb jelszavakhoz vezethet.",
                     "Hagyd a böngésző / password manager kezelni, és inkább MFA-t adj hozzá.",
+                    confidence=Confidence.VERIFIED,
                 )
             )
 
@@ -201,6 +207,7 @@ def _check_inline_handlers(soup: BeautifulSoup, result: CheckerResult) -> None:
                 f"Inline onXxx handlerek találhatók ({len(handlers)} példa). Ez nehezíti a szigorú CSP használatát.",
                 "Mozgasd a handlereket addEventListenerbe, hogy lehessen szigorú CSP-t (nonce/hash) bevezetni.",
                 evidence="\n".join(handlers),
+                confidence=Confidence.VERIFIED,
             )
         )
     if inline_scripts > 0:
@@ -211,6 +218,7 @@ def _check_inline_handlers(soup: BeautifulSoup, result: CheckerResult) -> None:
                 Severity.INFO,
                 "Inline scriptek megnehezítik a szigorú CSP-t. Önmagukban nem hiba, de XSS-impactot növelnek.",
                 "Külső fájlba mozgasd vagy nonce/hash alapú CSP-t használj.",
+                confidence=Confidence.VERIFIED,
             )
         )
 
@@ -237,6 +245,7 @@ def _check_comments(html: str, result: CheckerResult) -> None:
                 f"{len(leaks)} komment érzékeny kulcsszavakat tartalmaz (TODO, password, internal, debug...). Lehet, hogy belső infó szivárgott.",
                 "Távolítsd el a kommenteket build során (pl. HTML minifier), és ne tarts production-ben fejlesztői megjegyzést.",
                 evidence="\n---\n".join(leaks),
+                confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
         )
 
@@ -258,6 +267,7 @@ def _check_secrets(html: str, result: CheckerResult) -> None:
                 "A kiszolgált tartalomban API kulcsra / privát kulcsra / tokenre illeszkedő minta található. Ha valódi, azonnal rotálandó.",
                 "Vizsgáld meg, hogy valódi titok-e. Ha igen, rotáld, és tedd backendbe / env változóba.",
                 evidence="\n".join(hits),
+                confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
         )
 
@@ -286,6 +296,7 @@ def _check_vulnerable_libs(soup: BeautifulSoup, base: str, result: CheckerResult
                 f"{len(hits)} potenciálisan sebezhető library verziónak látszik az URL-ekben.",
                 "Frissítsd a library-kat, retire.js-szel ellenőrizd a CI-ban.",
                 evidence="\n".join(hits),
+                confidence=Confidence.STRONG_INDICATOR,
             )
         )
 
@@ -314,5 +325,6 @@ def _check_csrf_token_hint(soup: BeautifulSoup, result: CheckerResult) -> None:
                 Severity.LOW,
                 "A POST űrlapokon nem találtam tipikus CSRF token mezőt. Lehet, hogy header/cookie alapú a védelem — kézi ellenőrzés kell.",
                 "Ellenőrizd hogy van CSRF védelem (token vagy SameSite=Strict cookie + origin check).",
+                confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
         )

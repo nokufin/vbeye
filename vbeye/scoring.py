@@ -11,6 +11,19 @@ class Severity(str, Enum):
     OK = "ok"
 
 
+class Confidence(str, Enum):
+    VERIFIED = "verified"
+    STRONG_INDICATOR = "strong_indicator"
+    REQUIRES_MANUAL_VALIDATION = "requires_manual_validation"
+
+
+CONFIDENCE_LABEL = {
+    Confidence.VERIFIED: "VERIFIED",
+    Confidence.STRONG_INDICATOR: "STRONG INDICATOR",
+    Confidence.REQUIRES_MANUAL_VALIDATION: "KÉZI ELLENŐRZÉS SZÜKSÉGES",
+}
+
+
 SEVERITY_WEIGHT = {
     Severity.OK: 0,
     Severity.INFO: 0,
@@ -29,6 +42,7 @@ class Finding:
     description: str
     recommendation: str = ""
     evidence: str = ""
+    confidence: Confidence = Confidence.STRONG_INDICATOR
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +52,7 @@ class Finding:
             "description": self.description,
             "recommendation": self.recommendation,
             "evidence": self.evidence,
+            "confidence": self.confidence.value,
         }
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import requests
 
-from vbeye.scoring import CheckerResult, Finding, Severity
+from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 
 USER_AGENT = "vbeye/0.1 (+https://github.com/nokufin/vbeye)"
@@ -28,6 +28,7 @@ def _check_hsts(h: dict) -> Finding | None:
             Severity.HIGH,
             "Nincs Strict-Transport-Security fejléc. A böngészők nem kényszerítik HTTPS használatát, így SSL-stripping támadás lehetséges.",
             "Adj hozzá `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload` fejlécet.",
+            confidence=Confidence.VERIFIED,
         )
     parts = [p.strip().lower() for p in v.split(";")]
     max_age = 0
@@ -45,6 +46,7 @@ def _check_hsts(h: dict) -> Finding | None:
             f"A HSTS max-age értéke {max_age} sec, ami a legtöbb böngésző elvárása alatt van (min. 6 hónap).",
             "Állítsd legalább 15552000 (180 nap), preload listához 31536000 (1 év) szükséges.",
             evidence=v,
+            confidence=Confidence.VERIFIED,
         )
     if "includesubdomains" not in parts:
         return Finding(
@@ -54,6 +56,7 @@ def _check_hsts(h: dict) -> Finding | None:
             "Az aldomainek nincsenek védve HSTS-szel, ami sub-domain takeover támadásnál hasznosítható.",
             "Egészítsd ki a fejlécet `includeSubDomains` direktívával.",
             evidence=v,
+            confidence=Confidence.VERIFIED,
         )
     return None
 
@@ -67,6 +70,7 @@ def _check_csp(h: dict) -> Finding | None:
             Severity.HIGH,
             "Nincs CSP fejléc. XSS esetén nincs böngészőszintű mitigáció, minden inline és külső script lefuthat.",
             "Vezess be CSP-t legalább `default-src 'self'` alappal, és iteratív szigorítással.",
+            confidence=Confidence.VERIFIED,
         )
     lower = v.lower()
     risky = []
@@ -84,6 +88,7 @@ def _check_csp(h: dict) -> Finding | None:
             f"A CSP enged: {', '.join(risky)}. Ezek lényegében kioltják a CSP védelmét.",
             "Cseréld le nonce-/hash-alapú megoldásra, és kerüld a wildcard source-okat.",
             evidence=v[:300],
+            confidence=Confidence.STRONG_INDICATOR,
         )
     return None
 
@@ -100,6 +105,7 @@ def _check_xfo(h: dict) -> Finding | None:
             Severity.MEDIUM,
             "Clickjacking elleni védelem nélkül az oldal beágyazható iframe-be.",
             "Adj hozzá `X-Frame-Options: DENY` vagy CSP `frame-ancestors 'none'` direktívát.",
+            confidence=Confidence.VERIFIED,
         )
     if v.upper() not in ("DENY", "SAMEORIGIN"):
         return Finding(
@@ -109,6 +115,7 @@ def _check_xfo(h: dict) -> Finding | None:
             f"Az X-Frame-Options értéke `{v}` — az ALLOW-FROM elavult, csak DENY/SAMEORIGIN érvényes.",
             "Cseréld `DENY`-re vagy `SAMEORIGIN`-ra.",
             evidence=v,
+            confidence=Confidence.VERIFIED,
         )
     return None
 
@@ -122,6 +129,7 @@ def _check_xcto(h: dict) -> Finding | None:
             Severity.LOW,
             "A böngésző MIME-snifolhatja a tartalmat, ami pl. képnek álcázott script futtatását teheti lehetővé.",
             "Adj hozzá `X-Content-Type-Options: nosniff` fejlécet.",
+            confidence=Confidence.VERIFIED,
         )
     return None
 
@@ -135,6 +143,7 @@ def _check_referrer(h: dict) -> Finding | None:
             Severity.LOW,
             "Külső linkeken alapértelmezetten szivároghatnak útvonalak és query paraméterek.",
             "Állítsd `strict-origin-when-cross-origin`-ra vagy szigorúbbra.",
+            confidence=Confidence.VERIFIED,
         )
     weak = {"unsafe-url", "no-referrer-when-downgrade", ""}
     if v.lower() in weak:
@@ -145,6 +154,7 @@ def _check_referrer(h: dict) -> Finding | None:
             f"A `{v}` policy érzékeny URL adatokat szivárogtathat más originekre.",
             "Használj `strict-origin-when-cross-origin` vagy `no-referrer` értéket.",
             evidence=v,
+            confidence=Confidence.VERIFIED,
         )
     return None
 
@@ -157,6 +167,7 @@ def _check_permissions(h: dict) -> Finding | None:
             Severity.INFO,
             "Nincs explicit korlátozás a böngésző feature-ekre (kamera, mikrofon, geolocation, stb.).",
             "Definiálj minimum-policy-t, pl. `Permissions-Policy: camera=(), microphone=(), geolocation=()`.",
+            confidence=Confidence.VERIFIED,
         )
     return None
 
@@ -174,6 +185,7 @@ def _check_disclosure(h: dict) -> list[Finding]:
                     f"A `{label}` fejléc szoftvert/verziót szivárogtat, ami célzott exploit kereséshez használható.",
                     "Távolítsd el a fejlécet vagy állítsd üresre a reverse proxyban.",
                     evidence=f"{label}: {v}",
+                    confidence=Confidence.VERIFIED,
                 )
             )
     return out
@@ -206,6 +218,7 @@ def _check_cookies(resp: requests.Response) -> list[Finding]:
                     f"A sütő hiányzó attribútumai: {', '.join(problems)}. Ez session lopás / CSRF kockázatot növel.",
                     "Állítsd be a hiányzó flag-eket. SameSite legalább `Lax`, érzékeny sütiknél `Strict`.",
                     evidence=c[:200],
+                    confidence=Confidence.VERIFIED,
                 )
             )
     return out
@@ -237,6 +250,8 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
                 Severity.HIGH,
                 "A HTTP kérés nem irányít HTTPS-re, így a forgalom alapból titkosítatlan.",
                 "Konfigurálj 301-es átirányítást a HTTPS verzióra, és kapcsold be a HSTS-t.",
+                evidence=f"start: {url} → final: {resp.url}",
+                confidence=Confidence.VERIFIED,
             )
         )
 
@@ -256,6 +271,7 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
                 "Security headers rendben",
                 Severity.OK,
                 "Minden fontos security header beállítva, nincs nyilvánvaló hiányosság.",
+                confidence=Confidence.VERIFIED,
             )
         )
 

@@ -32,8 +32,8 @@ CHECK_ID_TO_HEADER = {
 
 
 HEADERS_SECTION_CLOSER = (
-    "A fenti hiányosságok együtt egy olyan alapbiztonsági szintet eredményeznek, "
-    "amely nem felel meg a mai üzleti elvárásoknak."
+    "A fenti hiányosságok együttesen csökkentik a böngészőszintű védelmi rétegeket, "
+    "amelyek a jelenlegi iparági gyakorlat szerint az alapvető hardening részét képezik."
 )
 
 
@@ -181,8 +181,9 @@ SOURCE_SECTION = {
         ),
     },
     "closer": (
-        "A fenti megfigyelések összességében arra utalnak, hogy a webhely nincs rendszeres, "
-        "kontrollált szakértői karbantartás alatt, ami nem felel meg a mai iparági elvárásoknak."
+        "A fenti megfigyelések arra utalnak, hogy a jelenlegi frontend- és biztonsági "
+        "konfiguráció több ponton nem követi teljes körűen a modern webbiztonsági ajánlásokat. "
+        "A konkrét üzemeltetési és karbantartási állapot kézi vizsgálat keretében pontosítható."
     ),
 }
 
@@ -194,9 +195,9 @@ DISCLOSURE_SECTION = {
         "verzióját, ami a támadói felderítési fázist nagymértékben lerövidíti:"
     ),
     "closer": (
-        "Egy automatizált tömeges szkenner ezen információk alapján pontosan célzott "
-        "exploit-csomagot tud futtatni a webhelyen, anélkül hogy bármilyen aktív "
-        "felderítést végezne."
+        "Az ilyen információk csökkentik a támadói felderítési időt: konkrét verziószám "
+        "azonosítása után az automatizált eszközök közvetlenül a publikus CVE-adatbázisra "
+        "tudnak támaszkodni a sebezhetőség-keresés során."
     ),
 }
 
@@ -249,12 +250,12 @@ RISK_CLASSIFICATION = {
         "dokumentálható hiányosságként kerülhetnek rögzítésre."
     ),
     "high": (
-        "A {host} jelenlegi állapota nem pusztán „nem optimális\", hanem konkrétan azonosítható "
-        "és kihasználható biztonsági hiányosságokat tartalmaz. Ezek a hiányosságok együttesen "
-        "valós támadási felületet jelentenek – nem csupán elméleti, hanem jelenlegi működési "
-        "kitettséget. Üzleti oldalról ez a kombináció különösen problémás: egy partner vagy "
-        "beszállítói audit során az ilyen szintű hiányosságok bizalomvesztést okozhatnak, "
-        "és akár együttműködés meghiúsulásához is vezethetnek."
+        "A {host} jelenlegi állapota konkrétan azonosítható biztonsági hiányosságokat tartalmaz, "
+        "amelyek bizonyos körülmények között támadási felületet képezhetnek. A hiányosságok "
+        "együttes előfordulása növeli a kockázat valószínűségét, és üzleti oldalról is "
+        "relevánssá teszi a kezelésüket: egy partneri vagy beszállítói átvilágítás során "
+        "az ilyen szintű hiányosságok dokumentálhatók, és a bizalmi viszonyra negatívan "
+        "hathatnak."
     ),
 }
 

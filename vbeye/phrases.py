@@ -224,8 +224,9 @@ EXECUTIVE_SUMMARY_TEMPLATE = {
         "headers_ok": "A vizsgált biztonsági HTTP-fejlécek többsége konfigurálva van, ugyanakkor néhány terület további finomítást igényel.",
     },
     "risk_framing": (
-        "Ez nem elméleti, hanem jelenleg is fennálló, automatizált támadások által célzott állapot: "
-        "a webhely jelen formájában automatizált szkennerek számára jól azonosítható, könnyű célpont."
+        "A feltárt hiányosságok automatizált biztonsági szkennerek számára nyilvánosan "
+        "azonosíthatók, ezért egy strukturált sérülékenység-felmérés keretében prioritizált "
+        "kezelést igényelnek."
     ),
     "industry_template": (
         "Egy {industry} esetében ez közvetlen üzleti, jogi és reputációs kockázat. "

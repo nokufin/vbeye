@@ -92,8 +92,8 @@ def _check_csp(h: dict) -> Finding | None:
         return Finding(
             "headers.csp.missing",
             "Content-Security-Policy hiányzik",
-            Severity.HIGH,
-            "Nincs CSP fejléc. XSS esetén nincs böngészőszintű mitigáció, minden inline és külső script lefuthat.",
+            Severity.MEDIUM,
+            "Nincs CSP fejléc. Önmagában nem jelent exploit-ot, de XSS esetén nincs böngészőszintű mitigációs réteg.",
             "Vezess be CSP-t legalább `default-src 'self'` alappal, és iteratív szigorítással.",
             confidence=Confidence.VERIFIED,
         )

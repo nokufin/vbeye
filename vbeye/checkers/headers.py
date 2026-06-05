@@ -243,6 +243,18 @@ def _check_disclosure(h: dict) -> list[Finding]:
     return out
 
 
+SESSION_COOKIE_HINTS = (
+    "session", "sess", "sid", "auth", "token", "jwt",
+    "phpsessid", "jsessionid", "asp.net_sessionid",
+    "connect.sid", "remember", "xsrf", "csrf",
+)
+
+
+def _is_likely_session_cookie(name: str) -> bool:
+    n = name.lower()
+    return any(hint in n for hint in SESSION_COOKIE_HINTS)
+
+
 def _check_cookies(resp: requests.Response) -> list[Finding]:
     out: list[Finding] = []
     set_cookies = resp.raw.headers.getlist("Set-Cookie") if hasattr(resp.raw.headers, "getlist") else []
@@ -254,25 +266,49 @@ def _check_cookies(resp: requests.Response) -> list[Finding]:
     for c in set_cookies:
         lower = c.lower()
         name = c.split("=", 1)[0].strip()
+        is_session = _is_likely_session_cookie(name)
+
+        # SameSite=None requires Secure (RFC 6265bis) — modern browsers reject the
+        # cookie outright otherwise. Treat as a distinct misconfiguration.
+        samesite_none_insecure = ("samesite=none" in lower) and ("secure" not in lower)
+
         problems = []
-        if is_https and "secure" not in lower:
+        if samesite_none_insecure:
+            problems.append("Secure (SameSite=None megköveteli)")
+        elif is_https and "secure" not in lower:
             problems.append("Secure")
         if "httponly" not in lower:
             problems.append("HttpOnly")
         if "samesite=" not in lower:
             problems.append("SameSite")
-        if problems:
-            out.append(
-                Finding(
-                    f"headers.cookie.flags",
-                    f"Cookie '{name}' hiányzó flag-ek",
-                    Severity.MEDIUM,
-                    f"A sütő hiányzó attribútumai: {', '.join(problems)}. Ez session lopás / CSRF kockázatot növel.",
-                    "Állítsd be a hiányzó flag-eket. SameSite legalább `Lax`, érzékeny sütiknél `Strict`.",
-                    evidence=c[:200],
-                    confidence=Confidence.VERIFIED,
-                )
+
+        if not problems:
+            continue
+
+        if is_session:
+            severity = Severity.HIGH
+            label = "Session-szerű cookie"
+            risk = "session-lopás vagy CSRF kockázatot növel"
+        elif samesite_none_insecure:
+            severity = Severity.MEDIUM
+            label = "Cookie"
+            risk = "modern böngészők a sütit elutasítják, ami funkcionális hibához vezethet"
+        else:
+            severity = Severity.LOW
+            label = "Cookie"
+            risk = "adatvédelmi és cross-site visszaélési szempontból érdemes javítani"
+
+        out.append(
+            Finding(
+                "headers.cookie.flags",
+                f"{label} '{name}' hiányzó / hibás flag-ek",
+                severity,
+                f"A `{name}` cookie attribútum-hibái: {', '.join(problems)}. Ez {risk}.",
+                "Állítsd be a hiányzó flag-eket. SameSite legalább `Lax`, érzékeny sütiknél `Strict`. SameSite=None csak Secure mellett érvényes.",
+                evidence=c[:200],
+                confidence=Confidence.VERIFIED,
             )
+        )
     return out
 
 

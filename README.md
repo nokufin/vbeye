@@ -1,5 +1,7 @@
 # vbeye
 
+**Passive Web Security Assessment Tool** · v1.0.0 · Developed by theEreb0x
+
 Nyilvános web target gyors kibervédelmi auditja **3 modullal**:
 
 - **headers** – Security headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), cookie flag-ek, információ-szivárgás (Server / X-Powered-By)
@@ -9,7 +11,10 @@ Nyilvános web target gyors kibervédelmi auditja **3 modullal**:
 A futás végén:
 - színes CLI összefoglaló (score 0–100, A–F érdemjegy, súlyozott),
 - önálló HTML jelentés (offline böngészhető, megosztható az ügyféllel),
-- opcionálisan JSON kimenet (CI/CD-be).
+- opcionálisan JSON kimenet (CI/CD-be),
+- opcionálisan üzleti-stílusú DOCX deliverable (ügyfél-átadható, branding-elve).
+
+**Minden finding `confidence` szintet kap:** `VERIFIED` (közvetlen megfigyelés), `STRONG INDICATOR` (erős jel), `REQUIRES_MANUAL_VALIDATION` (heurisztika, kézi vizsgálat). A riportok színes badge / inline marker formájában jelölik, így minden megállapítás külön-külön védhető egy ügyfélkérdezés során.
 
 ## Telepítés
 
@@ -60,6 +65,13 @@ vbeye example.com --docx \
   --industry "ipari kivitelező vállalat" \
   --compliance "NIS2 és GDPR" \
   --price "150 000 – 220 000 Ft + ÁFA"
+
+# Szektor-specifikus vezetői szöveg: az --industry értékét kulcsszó alapján
+# klasszifikáljuk és sektor-specifikus business-context paragrafust választunk:
+#   "hotel", "szálloda", "panzió"             → vendéglátás / foglalási bizalom
+#   "gyártó", "ipari", "automotive"           → beszállítói audit / ISO 27001
+#   "önkormányzat", "hivatal", "minisztérium" → lakossági bizalom / NIS2
+#   "WordPress KKV", "kkv"                    → SEO spam / SMTP abuse
 
 # Ajánlat 1 ár elrejtése
 vbeye example.com --docx --price ""
@@ -124,7 +136,14 @@ CI-ban használva így bukik el a pipeline súlyos hiba esetén:
 | MEDIUM | 8 |
 | LOW | 3 |
 | INFO / OK | 0 |
-| Checker hiba | 15 |
+| Checker hiba | 5 |
+
+**Kategória-cap**: minden modul max ennyit vonhat le (hogy egy kategória ne ölje meg a score-t):
+- headers: 30
+- source: 35
+- ssl: 50
+
+**E-floor**: ha nincs valódi kritikus problémás (HTTP-only, lejárt cert, mixed content, plaintext password form, leaked secret) ÉS nincs 3+ HIGH finding sem, a score nem eshet 30 alá (E max). Ez védi a modern HTTPS oldalakat a "minden hardening hiányos → automatikus F" reflextől.
 
 | Score | Grade |
 |-------|-------|
@@ -133,7 +152,19 @@ CI-ban használva így bukik el a pipeline súlyos hiba esetén:
 | 65–79 | C |
 | 50–64 | D |
 | 30–49 | E |
-| <30 | F |
+| <30 | F (csak valós kritikus mellett) |
+
+## Validation szintek
+
+Minden finding kap egy `confidence` mezőt — a riportokban (HTML badge + DOCX inline marker) látható:
+
+| Szint | Mit jelent | Példa |
+|---|---|---|
+| **VERIFIED** | Közvetlen, megerősített megfigyelés a szerverválaszból | Hiányzó HSTS header, lejárt cert, HTTP form action |
+| **STRONG INDICATOR** | Erős jel, kiegészítő megerősítéssel pontosítható | CSP wildcard heurisztika, SRI external script, lib URL pattern |
+| **REQUIRES_MANUAL_VALIDATION** | Heurisztika, kézi validáció szükséges | Gyanús HTML komment, generic key=value secret minta, CSRF token hint |
+
+Egy ügyfél vagy reviewer nem tudja false-positive-ként visszadobni a riportot, mert a tool maga jelöli a heurisztikus megállapításokat.
 
 ## Biztonságos használat
 

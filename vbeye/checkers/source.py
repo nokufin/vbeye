@@ -5,6 +5,7 @@ import re
 from urllib.parse import urljoin, urlparse
 
 import requests
+import tldextract
 from bs4 import BeautifulSoup
 
 from vbeye import __version__
@@ -102,15 +103,60 @@ VULNERABLE_LIBS = {
 }
 
 
+# WordPress / classic asset URLs put the version in a `?ver=` query string,
+# which the inline patterns above can't capture. Detect lib name in the path
+# and check the version separately.
+WP_VERSION_RE = re.compile(r"[?&]ver=(\d+\.\d+(?:\.\d+)?)", re.I)
+LIB_NAME_IN_PATH_RE = {
+    "jquery":    re.compile(r"(?i)(?:^|/)jquery(?:\.min)?\.js(?:$|[?&])"),
+    "bootstrap": re.compile(r"(?i)(?:^|/)bootstrap(?:\.min)?\.(?:js|css)(?:$|[?&])"),
+    "angular":   re.compile(r"(?i)(?:^|/)angular(?:\.min)?\.js(?:$|[?&])"),
+}
+
+
+def _vuln_range_note(lib: str, version: str) -> tuple[str, str] | None:
+    """Return (version_label, note) if version is in a known-vulnerable range."""
+    try:
+        major, minor = (int(p) for p in version.split(".")[:2])
+    except ValueError:
+        return None
+    if lib == "jquery":
+        if major < 3:
+            return f"{major}.x", "XSS via $.html() (CVE-2020-11022/23) — frissítés 3.5+"
+        if major == 3 and minor < 5:
+            return f"3.{minor}", "CVE-2020-11022/23 — frissítés 3.5+"
+    elif lib == "bootstrap":
+        if major in (2, 3):
+            return f"{major}.x", "XSS issuek (CVE-2019-8331) — frissítés 4.3.1+"
+    elif lib == "angular":
+        if major == 1 and minor <= 7:
+            return f"1.{minor}", "Lifecycle vége, ismert XSS/sebezhetőségek — migrálj"
+    return None
+
+
 def _absolute(base: str, href: str) -> str:
     return urljoin(base, href)
 
 
-def _is_external(base: str, href: str) -> bool:
+def _registrable_domain(url: str) -> str:
+    """Return the registrable (eTLD+1) portion of a URL, e.g. 'example.com'."""
     try:
-        base_host = urlparse(base).hostname or ""
-        ref_host = urlparse(_absolute(base, href)).hostname or ""
-        return ref_host != "" and ref_host != base_host
+        ext = tldextract.extract(url)
+        if ext.domain and ext.suffix:
+            return f"{ext.domain}.{ext.suffix}".lower()
+    except Exception:
+        pass
+    return (urlparse(url).hostname or "").lower()
+
+
+def _is_external(base: str, href: str) -> bool:
+    """True only when the resource is on a *different* registrable domain.
+    Subdomains of the same org (static.example.com from www.example.com) are
+    NOT external — they typically share trust boundary."""
+    try:
+        base_root = _registrable_domain(base)
+        ref_root = _registrable_domain(_absolute(base, href))
+        return ref_root != "" and base_root != "" and ref_root != base_root
     except Exception:
         return False
 
@@ -157,15 +203,41 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
     return result
 
 
+MIXED_CONTENT_ATTRS = (
+    ("script", "src"),
+    ("link", "href"),
+    ("img", "src"),
+    ("iframe", "src"),
+    ("video", "src"),
+    ("video", "poster"),
+    ("audio", "src"),
+    ("source", "src"),
+    ("embed", "src"),
+    ("track", "src"),
+    ("input", "src"),
+    ("object", "data"),
+    ("body", "background"),
+)
+
+
 def _check_mixed_content(soup: BeautifulSoup, base: str, is_https: bool, result: CheckerResult) -> None:
     if not is_https:
         return
     mixed = []
-    for tag, attr in (("script", "src"), ("link", "href"), ("img", "src"), ("iframe", "src"), ("video", "src"), ("audio", "src")):
+    for tag, attr in MIXED_CONTENT_ATTRS:
         for el in soup.find_all(tag):
             v = el.get(attr)
             if v and v.startswith("http://"):
                 mixed.append(f"{tag} {attr}={v}")
+    # srcset attribute (img / source) carries comma-separated URL+descriptor pairs.
+    for el in soup.find_all(["img", "source"]):
+        srcset = el.get("srcset")
+        if not srcset:
+            continue
+        for candidate in srcset.split(","):
+            tokens = candidate.strip().split()
+            if tokens and tokens[0].startswith("http://"):
+                mixed.append(f"{el.name} srcset={tokens[0]}")
     if mixed:
         result.findings.append(
             Finding(
@@ -363,12 +435,38 @@ def _check_vulnerable_libs(soup: BeautifulSoup, base: str, result: CheckerResult
         sources.append(s["href"])
 
     hits = []
+    seen = set()
     for src in sources:
+        matched = False
         for lib, patterns in VULNERABLE_LIBS.items():
             for pat, version_label, note in patterns:
                 if pat.search(src):
-                    hits.append(f"{lib} {version_label} — {src} ({note})")
+                    key = (lib, version_label, src)
+                    if key not in seen:
+                        seen.add(key)
+                        hits.append(f"{lib} {version_label} — {src} ({note})")
+                    matched = True
                     break
+            if matched:
+                break
+        if matched:
+            continue
+        # Fallback: WordPress-style `?ver=X.Y.Z` query string where the inline
+        # patterns don't catch the version because the URL is /jquery.min.js?ver=...
+        wp_ver_match = WP_VERSION_RE.search(src)
+        if not wp_ver_match:
+            continue
+        version = wp_ver_match.group(1)
+        for lib, path_re in LIB_NAME_IN_PATH_RE.items():
+            if path_re.search(src):
+                vuln = _vuln_range_note(lib, version)
+                if vuln:
+                    version_label, note = vuln
+                    key = (lib, version_label, src)
+                    if key not in seen:
+                        seen.add(key)
+                        hits.append(f"{lib} {version_label} — {src} ({note})")
+                break
 
     if hits:
         result.findings.append(

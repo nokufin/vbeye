@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from vbeye import __version__
+from vbeye.batch import parse_targets_file, print_summary, run_batch, write_csv_summary
 from vbeye.checkers import headers as headers_check
 from vbeye.checkers import ssl as ssl_check
 from vbeye.checkers import source as source_check
@@ -119,17 +120,85 @@ def _print_findings(console: Console, results: list[CheckerResult]) -> None:
         console.print(table)
 
 
+def _print_batch_banner(console: Console) -> None:
+    console.print(f"[bold cyan]{BANNER}[/]")
+    console.print(f"[bold]VBEye v{__version__}[/] · batch mode")
+    console.print(f"[dim]{SUBTITLE}[/]\n")
+
+
+def _run_batch_mode(args, console: Console) -> int:
+    targets_path = Path(args.batch)
+    if not targets_path.exists():
+        console.print(f"[bold red]Hiba:[/] Targets fájl nem található: {targets_path}")
+        return 1
+
+    targets = parse_targets_file(targets_path)
+    if not targets:
+        console.print(f"[bold red]Hiba:[/] {targets_path} üres vagy csak komment.")
+        return 1
+
+    if args.concurrency < 1 or args.concurrency > 16:
+        console.print(f"[bold red]Hiba:[/] --concurrency 1 és 16 közé kell essen (kaptam: {args.concurrency}).")
+        return 1
+
+    _print_batch_banner(console)
+
+    docx_cfg = None
+    if args.docx is not None:
+        try:
+            docx_cfg = load_config(args.config)
+        except FileNotFoundError as e:
+            console.print(f"[bold red]Config hiba:[/] {e}")
+            return 1
+        if docx_cfg.source_path:
+            console.print(f"[dim]config: {docx_cfg.source_path}[/]")
+
+    opts = {
+        "skip": args.skip,
+        "timeout": args.timeout,
+        "no_html": args.no_html,
+        "json": args.batch_json,
+        "docx": args.docx is not None,
+        "docx_cfg": docx_cfg,
+        "industry": args.industry,
+        "compliance": args.compliance,
+        "price": args.price,
+        "duration": args.duration,
+        "scan_source": args.scan_source,
+    }
+
+    results, batch_dir = run_batch(targets, opts, args.concurrency, console=console)
+
+    csv_path = Path(args.batch_csv) if args.batch_csv else batch_dir / "summary.csv"
+    write_csv_summary(results, csv_path)
+
+    print_summary(results, console)
+    console.print(f"\n[bold green]CSV summary:[/] {csv_path}")
+    console.print(f"[bold green]Reports dir:[/] {batch_dir}")
+
+    # Exit code: 2 ha bármelyik target F vagy E, 0 egyébként
+    has_severe = any(r.grade in ("E", "F") for r in results if not r.error)
+    return 2 if has_severe else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="vbeye",
         description="Nyilvános website security audit (headers, TLS, source).",
     )
-    parser.add_argument("target", help="URL vagy hostnév (pl. example.com vagy https://example.com)")
+    parser.add_argument("target", nargs="?", help="URL vagy hostnév (pl. example.com vagy https://example.com). Batch módban hagyd üresen és add meg --batch-tel.")
     parser.add_argument("-o", "--output", help="HTML report kimeneti útvonal (default: ./reports/<host>_<ts>.html)")
-    parser.add_argument("--json", dest="json_out", help="JSON eredmény ki külön fájlba")
+    parser.add_argument("--json", dest="json_out", help="JSON eredmény ki külön fájlba (single módban útvonal; batch módban flag formájában igaz/hamis)")
     parser.add_argument("--no-html", action="store_true", help="Ne generáljon HTML reportot")
     parser.add_argument("--skip", nargs="+", default=[], choices=["headers", "ssl", "source"], help="Modulok átugrása")
     parser.add_argument("--timeout", type=int, default=15, help="Per-checker timeout sec (default: 15)")
+
+    # Batch mód
+    batch_group = parser.add_argument_group("Batch scan (több target egyszerre)")
+    batch_group.add_argument("--batch", help="Targets fájl (egy domain/URL soronként, # komment OK). Inkompatibilis a pozicionális target-tel.")
+    batch_group.add_argument("--concurrency", type=int, default=4, help="Párhuzamos scan-ek száma (default: 4, max ajánlott: 8)")
+    batch_group.add_argument("--batch-csv", help="CSV summary kimenet útvonala (default: batch dir / summary.csv)")
+    batch_group.add_argument("--batch-json", action="store_true", help="Batch módban minden target-hez JSON-t is írjon")
 
     # DOCX deliverable
     docx_group = parser.add_argument_group("DOCX kimenet (üzleti deliverable)")
@@ -146,6 +215,17 @@ def main() -> int:
 
     args = parser.parse_args()
     console = Console()
+
+    # ---- Mode selection ----
+    if args.batch and args.target:
+        console.print("[bold red]Hiba:[/] --batch és pozicionális target együtt nem adható meg.")
+        return 1
+    if not args.batch and not args.target:
+        parser.print_help()
+        return 1
+
+    if args.batch:
+        return _run_batch_mode(args, console)
 
     target = _normalize_url(args.target)
 

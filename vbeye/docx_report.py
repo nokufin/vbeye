@@ -210,7 +210,7 @@ def _classify_findings(results: list[CheckerResult]) -> dict:
                 header_missing_count += 1
             if f.check_id.startswith("ssl.") and f.severity in (Severity.HIGH, Severity.CRITICAL):
                 flags["tls_critical"] = True
-            if f.check_id == "headers.cookie.flags":
+            if f.check_id.startswith("headers.cookie."):
                 flags["cookies_issue"] = True
             if f.check_id.startswith("headers.disclosure"):
                 flags["disclosure"] = True
@@ -290,10 +290,12 @@ def _section_2_adaptive(doc, branding, info: dict, results: list[CheckerResult])
         sec = phrases.COOKIE_SECTION
         _add_subsection_heading(doc, num(sec["title"]), branding)
         _add_paragraph(doc, sec["lead"], color=branding.color_body)
-        # Detect which flags are missing across findings
+        # Detect which flags are missing across findings (both regular and session)
         evidences = []
-        for f in info["by_check"].get("headers.cookie.flags", []):
-            evidences.append((f.title, f.evidence.lower() if f.evidence else ""))
+        for check_id, findings in info["by_check"].items():
+            if check_id.startswith("headers.cookie."):
+                for f in findings:
+                    evidences.append((f.title, f.evidence.lower() if f.evidence else ""))
         missing_kinds = set()
         for _t, ev in evidences:
             if "secure" not in ev:

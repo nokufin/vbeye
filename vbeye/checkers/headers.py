@@ -334,22 +334,36 @@ def _check_cookies(resp: requests.Response) -> list[Finding]:
         if not problems:
             continue
 
+        # Session cookies are auth boundary — missing flags = direct hijack path.
+        # 2+ missing flags is a full hijack trifecta (TLS-downgrade + XSS + CSRF
+        # all viable) → CRITICAL, real-risk bypass. 1 missing flag is HIGH.
         if is_session:
-            severity = Severity.HIGH
-            label = "Session-szerű cookie"
-            risk = "session-lopás vagy CSRF kockázatot növel"
+            check_id = "headers.cookie.session_flags"
+            if len(problems) >= 2:
+                severity = Severity.CRITICAL
+                label = "Session-szerű cookie"
+                risk = (
+                    "egyidejű TLS-downgrade, XSS és CSRF alapú session-hijack lehetőséget ad — "
+                    "az érintett munkamenet teljes átvételére alkalmas vektor"
+                )
+            else:
+                severity = Severity.HIGH
+                label = "Session-szerű cookie"
+                risk = "session-lopás vagy CSRF kockázatot növel"
         elif samesite_none_insecure:
+            check_id = "headers.cookie.flags"
             severity = Severity.MEDIUM
             label = "Cookie"
             risk = "modern böngészők a sütit elutasítják, ami funkcionális hibához vezethet"
         else:
+            check_id = "headers.cookie.flags"
             severity = Severity.LOW
             label = "Cookie"
             risk = "adatvédelmi és cross-site visszaélési szempontból érdemes javítani"
 
         out.append(
             Finding(
-                "headers.cookie.flags",
+                check_id,
                 f"{label} '{name}' hiányzó / hibás flag-ek",
                 severity,
                 f"A `{name}` cookie attribútum-hibái: {', '.join(problems)}. Ez {risk}.",

@@ -55,6 +55,7 @@ REAL_RISK_CHECK_IDS = frozenset({
     "source.mixed_content",
     "source.secret.exposed",
     "headers.tech.php_eol",
+    "headers.cookie.session_flags",
 })
 
 # Per-category penalty for a checker that errored out (timeout, connect refused).

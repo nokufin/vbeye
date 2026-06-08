@@ -5,7 +5,7 @@ import re
 import requests
 
 from vbeye import __version__
-from vbeye.cookies import is_likely_session_cookie, iter_set_cookie_headers
+from vbeye.cookies import is_csrf_token_cookie, is_likely_session_cookie, iter_set_cookie_headers
 from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 
@@ -315,6 +315,34 @@ def _check_cookies(resp: requests.Response) -> list[Finding]:
     for c in set_cookies:
         lower = c.lower()
         name = c.split("=", 1)[0].strip()
+
+        # CSRF token cookies (XSRF-TOKEN, csrftoken, _csrf, etc.) are intentionally
+        # JS-readable in the double-submit pattern. HttpOnly absence is by design,
+        # not a misconfiguration. Only Secure and SameSite hygiene matter here.
+        if is_csrf_token_cookie(name):
+            csrf_problems = []
+            if is_https and "secure" not in lower:
+                csrf_problems.append("Secure")
+            if "samesite=" not in lower:
+                csrf_problems.append("SameSite")
+            if csrf_problems:
+                out.append(
+                    Finding(
+                        "headers.cookie.csrf_flags",
+                        f"CSRF token cookie '{name}' hiányzó flag-ek",
+                        Severity.LOW,
+                        f"A `{name}` CSRF token cookie attribútum-hibái: {', '.join(csrf_problems)}. "
+                        f"A HttpOnly hiánya by-design (a frontend JavaScript-nek olvasnia kell a "
+                        f"tokent a header-be), de a Secure és SameSite konfigurálása ettől "
+                        f"függetlenül elvárt.",
+                        "Állítsd be a Secure és SameSite flag-eket. HttpOnly NEM szükséges CSRF "
+                        "token cookie-n a double-submit minta miatt.",
+                        evidence=c[:200],
+                        confidence=Confidence.VERIFIED,
+                    )
+                )
+            continue
+
         is_session = is_likely_session_cookie(name)
 
         # SameSite=None requires Secure (RFC 6265bis) — modern browsers reject the

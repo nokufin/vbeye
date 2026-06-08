@@ -406,6 +406,34 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
             )
         )
 
+    # cross-host redirect: ha az eredetileg lekért host eltér a végső host-tól,
+    # akkor a HSTS rollout sebezhető (a bare domain HSTS-t soha nem kap).
+    try:
+        from urllib.parse import urlparse as _urlparse
+        orig_host = (_urlparse(url).hostname or "").lower()
+        final_host = (_urlparse(resp.url).hostname or "").lower()
+        if orig_host and final_host and orig_host != final_host:
+            chain = " → ".join(
+                f"{h.status_code} {h.url}" for h in resp.history
+            ) + f" → {resp.status_code} {resp.url}"
+            result.findings.append(
+                Finding(
+                    "headers.redirect.cross_host",
+                    f"Cross-host átirányítás ({orig_host} → {final_host})",
+                    Severity.MEDIUM,
+                    f"A `{orig_host}` host átirányít a `{final_host}` host-ra. Ez a HSTS rollout "
+                    f"szempontjából problémás: a HSTS fejléc a végső host-on érvényesül, de a bare/eredeti "
+                    f"domain-en soha nem kerül beállításra. Ha valaki HTTP-vel kezdi a bare domain-en, "
+                    f"a kezdeti HTTP kérés MITM-támadás célpontja lehet.",
+                    "Az átirányítás célja legyen ugyanaz a host: először HTTP→HTTPS azonos hostnál, "
+                    "majd csak utána host-csere. Vagy állíts be HSTS-t mindkét host-on.",
+                    evidence=chain,
+                    confidence=Confidence.VERIFIED,
+                )
+            )
+    except Exception:
+        pass
+
     h = _norm(resp.headers)
     is_https_final = resp.url.startswith("https://")
 

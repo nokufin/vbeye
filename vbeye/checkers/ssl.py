@@ -260,17 +260,21 @@ def _eval_protocols(sr, result: CheckerResult) -> None:
                 )
             )
 
-    has_modern = False
+    has_tls12 = False
+    has_tls13 = False
     for attr in ("tls_1_2_cipher_suites", "tls_1_3_cipher_suites"):
         scan = getattr(sr, attr, None)
         if scan and scan.result and scan.result.accepted_cipher_suites:
-            has_modern = True
             label = "TLS 1.2" if "1_2" in attr else "TLS 1.3"
             enabled.append(label)
+            if "1_2" in attr:
+                has_tls12 = True
+            else:
+                has_tls13 = True
 
     result.meta["enabled_protocols"] = enabled
 
-    if not has_modern:
+    if not (has_tls12 or has_tls13):
         result.findings.append(
             Finding(
                 "ssl.protocol.no_modern",
@@ -278,6 +282,20 @@ def _eval_protocols(sr, result: CheckerResult) -> None:
                 Severity.CRITICAL,
                 "Sem TLS 1.2, sem TLS 1.3 nincs engedélyezve.",
                 "Engedélyezd a TLS 1.2-t és 1.3-at.",
+                confidence=Confidence.VERIFIED,
+            )
+        )
+    elif has_tls12 and not has_tls13:
+        result.findings.append(
+            Finding(
+                "ssl.protocol.no_tls_1_3",
+                "TLS 1.3 nincs engedélyezve",
+                Severity.HIGH,
+                "A szerver csak TLS 1.2-t kínál, TLS 1.3-at nem. A modern böngészők és kliensek "
+                "alapértelmezetten TLS 1.3-at preferálnak, és a megfelelőségi keretek (NIS2 "
+                "\"state of the art\" kripto, PCI-DSS 4.0) a legfrissebb TLS verziót várják el.",
+                "Engedélyezd a TLS 1.3-at a kiszolgálón (nginx 1.13+, Apache 2.4.36+, modern OpenSSL).",
+                evidence=f"enabled: {', '.join(enabled)}",
                 confidence=Confidence.VERIFIED,
             )
         )

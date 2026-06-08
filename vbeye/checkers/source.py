@@ -188,6 +188,7 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
     _check_comments(html, result)
     _check_secrets(html, result)
     _check_vulnerable_libs(soup, final_url, result)
+    _check_stale_analytics(soup, html, result)
     _check_csrf_token_hint(soup, resp, result)
 
     if not result.findings:
@@ -478,6 +479,48 @@ def _check_vulnerable_libs(soup: BeautifulSoup, base: str, result: CheckerResult
                 "Frissítsd a library-kat, retire.js-szel ellenőrizd a CI-ban.",
                 evidence="\n".join(hits),
                 confidence=Confidence.STRONG_INDICATOR,
+            )
+        )
+
+
+STALE_ANALYTICS_PATTERNS = [
+    # Universal Analytics — EoL 2023-07, no longer collects data
+    ("Universal Analytics (Google) — EoL 2023-07-01",
+     re.compile(r"\bUA-\d{4,}-\d+\b")),
+    # google-analytics.com/analytics.js or ga.js — pre-GA4 classic
+    ("Classic google-analytics.com script — deprecated, no data flow",
+     re.compile(r"google-analytics\.com/(?:analytics|ga)\.js")),
+    # Tag Manager URL with UA id (also Universal Analytics under GTM)
+    ("Universal Analytics under GTM — EoL 2023-07-01",
+     re.compile(r"googletagmanager\.com/gtag/js\?id=UA-\d+")),
+]
+
+
+def _check_stale_analytics(soup, html: str, result: CheckerResult) -> None:
+    """Detect references to deprecated analytics/tracking platforms. These don't
+    pose direct security risk but signal that the site has not been touched in
+    1-3+ years — useful as a maintenance/abandonment indicator."""
+    hits = []
+    for label, pat in STALE_ANALYTICS_PATTERNS:
+        for m in pat.finditer(html):
+            snippet = m.group(0)
+            if not any(snippet in h for h in hits):
+                hits.append(f"{label}: {snippet}")
+                break
+    if hits:
+        result.findings.append(
+            Finding(
+                "source.tech.stale_analytics",
+                "Elavult analitikai integráció",
+                Severity.LOW,
+                f"A forrás {len(hits)} elavult analitikai/tracking szolgáltatást hivatkoz, "
+                f"amelyek a gyártó (Google) általi élettartam-vég után már nem gyűjtenek adatot. "
+                f"Önmagában nem biztonsági kockázat, de jelzi hogy a webhely "
+                f"frontend-karbantartása több éve nem történt meg.",
+                "Migrálj GA4-re (gtag id G-XXXX) vagy távolítsd el a snippet-et. "
+                "Egyúttal érdemes a teljes frontend-karbantartást átnézni.",
+                evidence="\n".join(hits),
+                confidence=Confidence.VERIFIED,
             )
         )
 

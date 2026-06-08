@@ -1,6 +1,8 @@
 """Shared cookie classification utilities used by multiple checkers."""
 from __future__ import annotations
 
+import re
+
 
 SESSION_COOKIE_HINTS = (
     "session", "sess", "sid", "auth", "token", "jwt",
@@ -8,10 +10,19 @@ SESSION_COOKIE_HINTS = (
     "connect.sid", "remember", "xsrf", "csrf",
 )
 
+# Many CMSes (Joomla, Drupal, CodeIgniter…) use a random hex hash as the
+# session-cookie name. A 26-40 char hex string is overwhelmingly likely to
+# be a session cookie even without an explicit keyword.
+RANDOM_HASH_NAME_RE = re.compile(r"^[a-f0-9]{26,40}$", re.IGNORECASE)
+
 
 def is_likely_session_cookie(name: str) -> bool:
     n = name.lower()
-    return any(hint in n for hint in SESSION_COOKIE_HINTS)
+    if any(hint in n for hint in SESSION_COOKIE_HINTS):
+        return True
+    if RANDOM_HASH_NAME_RE.match(n):
+        return True
+    return False
 
 
 def iter_set_cookie_headers(resp) -> list[str]:

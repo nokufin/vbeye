@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import math
 import re
 from urllib.parse import urljoin, urlparse
@@ -22,15 +23,38 @@ REQUEST_HEADERS = {
 }
 
 # Format-specific patterns — high precision, low false-positive rate.
+# JWT is handled separately below: the payload is decoded and classified
+# (client-side session token vs. real server-secret leak) before deciding
+# severity. A bare JWT pattern alone is too ambiguous to call CRITICAL.
 HIGH_CONFIDENCE_SECRETS = [
     ("AWS access key", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("Google API key", re.compile(r"AIza[0-9A-Za-z\-_]{35}")),
     ("Slack token", re.compile(r"xox[abprs]-[0-9A-Za-z\-]{10,}")),
     ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----")),
-    ("JWT", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
     ("GitHub PAT", re.compile(r"\bghp_[A-Za-z0-9]{36}\b")),
     ("Stripe secret key", re.compile(r"\bsk_(?:test|live)_[A-Za-z0-9]{24,}\b")),
 ]
+
+# JWT pattern (3-segment base64url with eyJ header prefix on first two segments)
+JWT_PATTERN_RE = re.compile(
+    r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
+)
+
+# JWT payload keys that indicate a real server-secret leak.
+JWT_CRITICAL_KEYS_RE = re.compile(
+    r'"(password|passwd|private[_-]?key|api[_-]?key|client[_-]?secret|'
+    r'aws[_-]?(?:access|secret)[_-]?key|service[_-]?account|admin[_-]?token)"',
+    re.IGNORECASE,
+)
+
+# JWT payload keys that indicate a client-side session/state/anonymous token.
+# These are routine on modern frontends and are NOT secret material.
+JWT_CLIENT_SIDE_KEYS_RE = re.compile(
+    r'"(guest[_-]?uuid|guest[_-]?id|anonymous|consent|csrf|nonce|'
+    r'session[_-]?id|sessionid|state|cf[_-]?ray|cf[_-]?bm|bot[_-]?id|'
+    r'visitor[_-]?id|tracking[_-]?id|experiment|ab[_-]?test)"',
+    re.IGNORECASE,
+)
 
 # Heuristic generic-secret pattern — produces a separate, lower-confidence finding.
 GENERIC_SECRET_RE = re.compile(
@@ -77,6 +101,39 @@ def _shannon_entropy(s: str) -> float:
         return 0.0
     freq = {c: s.count(c) / len(s) for c in set(s)}
     return -sum(p * math.log2(p) for p in freq.values())
+
+
+def _decode_jwt_payload(jwt_str: str) -> str | None:
+    """Decode the middle (payload) segment of a JWT.
+    Returns the decoded JSON string, or None if the JWT cannot be parsed."""
+    parts = jwt_str.split(".")
+    if len(parts) != 3:
+        return None
+    payload_b64 = parts[1]
+    padding = "=" * (-len(payload_b64) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload_b64 + padding)
+        return decoded.decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _classify_jwt(jwt_str: str) -> tuple[str, str]:
+    """Classify a JWT pattern based on decoded payload content.
+
+    Returns (classification, payload_preview):
+      - 'critical'  → payload contains server-side secret keys (password, etc.)
+      - 'skip'      → payload contains client-side session/anonymous markers
+      - 'hint'      → ambiguous; needs manual validation
+    """
+    payload = _decode_jwt_payload(jwt_str)
+    if payload is None:
+        return ("hint", "<undecodable>")
+    if JWT_CRITICAL_KEYS_RE.search(payload):
+        return ("critical", payload)
+    if JWT_CLIENT_SIDE_KEYS_RE.search(payload):
+        return ("skip", payload)
+    return ("hint", payload)
 
 
 def _looks_like_real_secret(value: str) -> bool:
@@ -391,16 +448,63 @@ def _check_secrets(html: str, result: CheckerResult) -> None:
             verified_hits.append(f"{label}: {snippet[:60]}{'…' if len(snippet) > 60 else ''}")
             if len(verified_hits) >= 15:
                 break
-    if verified_hits:
+
+    # JWT — decode payload and classify as critical / skip / hint
+    jwt_critical_hits = []
+    jwt_hint_hits = []
+    seen_jwts: set[str] = set()
+    for m in JWT_PATTERN_RE.finditer(html):
+        jwt = m.group(0)
+        if jwt in seen_jwts:
+            continue
+        seen_jwts.add(jwt)
+        classification, payload = _classify_jwt(jwt)
+        prefix = jwt[:60] + ("…" if len(jwt) > 60 else "")
+        if classification == "critical":
+            jwt_critical_hits.append(
+                f"JWT (server-secret payload): {prefix}\n  payload: {payload[:200]}"
+            )
+        elif classification == "hint":
+            jwt_hint_hits.append(
+                f"JWT: {prefix}\n  payload: {payload[:200]}"
+            )
+        # 'skip' → no finding (client-side guest/session/state token)
+        if len(jwt_critical_hits) + len(jwt_hint_hits) >= 10:
+            break
+
+    all_critical = verified_hits + jwt_critical_hits
+    if all_critical:
         result.findings.append(
             Finding(
                 "source.secret.exposed",
                 "Konkrét formátumú titok a HTML-ben",
                 Severity.CRITICAL,
-                "A kiszolgált tartalom formátum-specifikus titok-mintát tartalmaz (AWS / Google / Slack / GitHub / Stripe kulcs vagy PEM private key block). Azonnal rotálandó, ha valódi.",
+                "A kiszolgált tartalom formátum-specifikus titok-mintát tartalmaz "
+                "(AWS / Google / Slack / GitHub / Stripe kulcs, PEM private key block, "
+                "vagy szerver-titkot tartalmazó JWT). Azonnal rotálandó, ha valódi.",
                 "Rotáld a kulcsot, töröld a HTML-ből, mozgasd backendbe / env változóba.",
-                evidence="\n".join(verified_hits),
+                evidence="\n".join(all_critical),
                 confidence=Confidence.VERIFIED,
+            )
+        )
+
+    if jwt_hint_hits:
+        result.findings.append(
+            Finding(
+                "source.secret.jwt_hint",
+                "JWT token a HTML-ben (kézi vizsgálat szükséges)",
+                Severity.HIGH,
+                f"{len(jwt_hint_hits)} JWT token található a kiszolgált tartalomban. "
+                f"A payload nem tartalmaz egyértelmű kliens-oldali jelzőt (guest_uuid, "
+                f"csrf, consent, session_id, anonymous stb.), de nyilvánvaló szerver-titok "
+                f"mintát sem. Passzív scan-ből nem dönthető el, hogy rutin kliens-oldali "
+                f"session-token (Next.js, Auth0, Cloudflare anonymous), VAGY szerver-titok "
+                f"kiszivárgása.",
+                "Decode-old a JWT payload-ot (jwt.io vagy `base64 -d`), és ellenőrizd: "
+                "ha kliens-szintű session/state token → OK; ha szerver-token vagy admin "
+                "claim → rotáld azonnal és töröld a HTML-ből.",
+                evidence="\n---\n".join(jwt_hint_hits),
+                confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
         )
 

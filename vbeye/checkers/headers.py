@@ -11,6 +11,21 @@ from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
 VERSION_RE = re.compile(r"\d+\.\d+")
 
+PHP_VERSION_RE = re.compile(r"(?i)PHP/(\d+)\.(\d+)(?:\.(\d+))?")
+
+# PHP support windows per php.net/supported-versions
+# As of 2026 — security support ENDED for these versions, no further patches.
+# Update this list periodically as PHP versions reach EoL.
+PHP_EOL_CRITICAL = (
+    (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6),  # all 5.x EoL since 2018
+    (7, 0), (7, 1), (7, 2), (7, 3), (7, 4),                   # all 7.x EoL by 2022
+    (8, 0),                                                    # 8.0 EoL Nov 2023
+)
+PHP_EOL_HIGH = (
+    (8, 1),   # EoL Nov 2024
+    (8, 2),   # EoL Dec 2025
+)
+
 FRAME_ANCESTORS_RE = re.compile(r"(?i)frame-ancestors\s+([^;]+)")
 
 # CSP source values that allow ANY origin to embed — these don't protect against clickjacking.
@@ -217,11 +232,53 @@ def _check_permissions(h: dict) -> Finding | None:
     return None
 
 
+def _check_php_version(h: dict) -> Finding | None:
+    v = h.get("x-powered-by", "")
+    m = PHP_VERSION_RE.search(v)
+    if not m:
+        return None
+    major, minor = int(m.group(1)), int(m.group(2))
+    version = f"{major}.{minor}" + (f".{m.group(3)}" if m.group(3) else "")
+    branch = (major, minor)
+
+    if branch in PHP_EOL_CRITICAL:
+        return Finding(
+            "headers.tech.php_eol",
+            f"Elavult PHP verzió ({version}) — biztonsági támogatás megszűnt",
+            Severity.CRITICAL,
+            f"A szerver PHP {version}-et használ az X-Powered-By fejléc alapján. Ez a verzió a "
+            f"php.net hivatalos támogatása alól kikerült, vagyis ismert sebezhetőségekre "
+            f"a felfedezésük óta nem érkezik javítás. Egy aktuális CVE-publikálás után a webhely "
+            f"a publikus exploit-okkal szemben azonnal kitett.",
+            "Frissítsd a PHP-t aktuálisan támogatott verzióra (jelenleg 8.3+). Kompatibilitási "
+            "változások miatt staging környezetben teszteld először.",
+            evidence=f"X-Powered-By: {v}",
+            confidence=Confidence.VERIFIED,
+        )
+    if branch in PHP_EOL_HIGH:
+        return Finding(
+            "headers.tech.php_eol",
+            f"Frissen elavult PHP verzió ({version}) — biztonsági támogatás lejárt",
+            Severity.HIGH,
+            f"A szerver PHP {version}-et használ, ami a php.net hivatalos biztonsági támogatás "
+            f"alól nemrég került ki. Új CVE-k esetén már nem kap patch-et.",
+            "Frissítsd a PHP-t aktuálisan támogatott verzióra (8.3+). Tervezz upgrade-et "
+            "rövid határidővel.",
+            evidence=f"X-Powered-By: {v}",
+            confidence=Confidence.VERIFIED,
+        )
+    return None
+
+
 def _check_disclosure(h: dict) -> list[Finding]:
     out = []
     for key, label in DISCLOSURE_HEADERS.items():
         v = h.get(key)
         if not v:
+            continue
+        # PHP-specific lifecycle handled by _check_php_version — skip generic disclosure
+        # to avoid emitting both a LOW "verziókiadás" and a CRITICAL EoL finding.
+        if key == "x-powered-by" and PHP_VERSION_RE.search(v):
             continue
         has_version = bool(VERSION_RE.search(v))
         if has_version:
@@ -346,6 +403,10 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
         f = check(h)
         if f:
             result.findings.append(f)
+
+    php_finding = _check_php_version(h)
+    if php_finding:
+        result.findings.append(php_finding)
 
     result.findings.extend(_check_disclosure(h))
     result.findings.extend(_check_cookies(resp))

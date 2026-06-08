@@ -54,6 +54,7 @@ REAL_RISK_CHECK_IDS = frozenset({
     "source.form.password_on_http",
     "source.mixed_content",
     "source.secret.exposed",
+    "headers.tech.php_eol",
 })
 
 # Per-category penalty for a checker that errored out (timeout, connect refused).
@@ -132,8 +133,19 @@ def compute_score(results: list[CheckerResult]) -> tuple[int, str]:
         if r.error:
             total_penalty += min(ERROR_PENALTY, ceiling)
             continue
-        cat_penalty = sum(SEVERITY_WEIGHT.get(f.severity, 0) for f in r.findings)
-        total_penalty += min(cat_penalty, ceiling)
+        # Findings tagged as REAL_RISK contribute their FULL weight regardless of
+        # the category ceiling — a real critical (expired cert, PHP EoL, exposed
+        # secret) must not be dampened just because the category already has many
+        # smaller findings.
+        real_risk_penalty = 0
+        capped_penalty = 0
+        for f in r.findings:
+            w = SEVERITY_WEIGHT.get(f.severity, 0)
+            if f.check_id in REAL_RISK_CHECK_IDS:
+                real_risk_penalty += w
+            else:
+                capped_penalty += w
+        total_penalty += min(capped_penalty, ceiling) + real_risk_penalty
 
     score = max(0, 100 - total_penalty)
     # Hardening-gap-only sites (no critical TLS/HTTP/secret issue, fewer than

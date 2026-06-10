@@ -38,7 +38,7 @@ SEVERITY_WEIGHT = {
 # hardening (headers) cannot be punished as severely as one with broken TLS
 # or leaked secrets — the categories are not comparable in business impact.
 CATEGORY_CEILING = {
-    "headers": 30,
+    "headers": 45,
     "source": 35,
     "ssl": 50,
 }
@@ -53,6 +53,7 @@ REAL_RISK_CHECK_IDS = frozenset({
     "ssl.protocol.ssl_2_0_cipher_suites",
     "source.form.password_on_http",
     "source.mixed_content",
+    "source.mixed_content.protocol_relative",
     "source.secret.exposed",
     "headers.tech.php_eol",
     "headers.cookie.session_flags",

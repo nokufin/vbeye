@@ -26,20 +26,18 @@ Thumbs.db
 .idea/
 *.swp
 
-# vbeye runtime output
 reports/
 *.html.bak
 result*.json
 
-# Secrets — soha ne commitold ezeket
 .env
 .env.*
 *.pem
 *.key
 
-# Sablon-források — kliens-specifikus audit jelentések (nem publikálhatóak)
 *forrás anyag/
 *forrás_anyag/
 
-# Saját config (esetleg cég-specifikus áradat/email lehet benne)
 vbeye.toml
+
+targets*.txt

@@ -10,6 +10,7 @@ import tldextract
 from bs4 import BeautifulSoup
 
 from vbeye import __version__
+from vbeye.bot_protection import bot_protection_error_text, is_bot_protection_host
 from vbeye.cookies import is_likely_session_cookie, iter_set_cookie_headers
 from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
@@ -28,12 +29,18 @@ REQUEST_HEADERS = {
 # severity. A bare JWT pattern alone is too ambiguous to call CRITICAL.
 HIGH_CONFIDENCE_SECRETS = [
     ("AWS access key", re.compile(r"AKIA[0-9A-Z]{16}")),
-    ("Google API key", re.compile(r"AIza[0-9A-Za-z\-_]{35}")),
     ("Slack token", re.compile(r"xox[abprs]-[0-9A-Za-z\-]{10,}")),
     ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----")),
     ("GitHub PAT", re.compile(r"\bghp_[A-Za-z0-9]{36}\b")),
     ("Stripe secret key", re.compile(r"\bsk_(?:test|live)_[A-Za-z0-9]{24,}\b")),
 ]
+
+# Google API key (AIza...) is handled separately: the same format covers both
+# server-side keys (Cloud Storage, Vision, etc.) AND client-side keys (Maps JS,
+# YouTube Embed, Analytics). Client-side keys are by-design publicly visible
+# and domain-restricted in the Google Cloud Console. Cannot distinguish from
+# passive HTML scan — emit HIGH + REQUIRES_MANUAL_VALIDATION instead of CRITICAL.
+GOOGLE_API_KEY_RE = re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")
 
 # JWT pattern (3-segment base64url with eyJ header prefix on first two segments)
 JWT_PATTERN_RE = re.compile(
@@ -233,6 +240,15 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
 
     final_url = resp.url
     is_https = final_url.startswith("https://")
+
+    # Bot-management / WAF challenge: ha a redirect challenge-oldalra ment, ne
+    # mérjük annak HTML-jét — abort egyértelmű hibával.
+    _final_host = (urlparse(final_url).hostname or "").lower()
+    if is_bot_protection_host(_final_host):
+        result.error = bot_protection_error_text(_final_host)
+        result.meta["blocked_by"] = _final_host
+        return result
+
     html = resp.text
     result.meta["bytes"] = len(html)
 
@@ -278,15 +294,25 @@ MIXED_CONTENT_ATTRS = (
 )
 
 
+def _is_protocol_relative(v: str) -> bool:
+    """`//host/path` — protocol-relative URL. Inherits page protocol → HTTP on HTTP visits."""
+    return v.startswith("//") and not v.startswith("///")
+
+
 def _check_mixed_content(soup: BeautifulSoup, base: str, is_https: bool, result: CheckerResult) -> None:
     if not is_https:
         return
     mixed = []
+    protocol_relative = []
     for tag, attr in MIXED_CONTENT_ATTRS:
         for el in soup.find_all(tag):
             v = el.get(attr)
-            if v and v.startswith("http://"):
+            if not v:
+                continue
+            if v.startswith("http://"):
                 mixed.append(f"{tag} {attr}={v}")
+            elif _is_protocol_relative(v):
+                protocol_relative.append(f"{tag} {attr}={v}")
     # srcset attribute (img / source) carries comma-separated URL+descriptor pairs.
     for el in soup.find_all(["img", "source"]):
         srcset = el.get("srcset")
@@ -294,8 +320,14 @@ def _check_mixed_content(soup: BeautifulSoup, base: str, is_https: bool, result:
             continue
         for candidate in srcset.split(","):
             tokens = candidate.strip().split()
-            if tokens and tokens[0].startswith("http://"):
-                mixed.append(f"{el.name} srcset={tokens[0]}")
+            if not tokens:
+                continue
+            url = tokens[0]
+            if url.startswith("http://"):
+                mixed.append(f"{el.name} srcset={url}")
+            elif _is_protocol_relative(url):
+                protocol_relative.append(f"{el.name} srcset={url}")
+
     if mixed:
         result.findings.append(
             Finding(
@@ -303,8 +335,24 @@ def _check_mixed_content(soup: BeautifulSoup, base: str, is_https: bool, result:
                 "Mixed content (HTTP erőforrás HTTPS oldalon)",
                 Severity.HIGH,
                 f"{len(mixed)} darab HTTP erőforrás a HTTPS oldalon. A böngészők blokkolják vagy figyelmeztetnek; MITM esetén injektálható.",
-                "Cseréld a HTTP URL-eket HTTPS-re, vagy használj protokoll-relatív URL-t.",
+                "Cseréld a HTTP URL-eket explicit HTTPS-re.",
                 evidence="\n".join(mixed[:10]),
+                confidence=Confidence.VERIFIED,
+            )
+        )
+
+    if protocol_relative:
+        result.findings.append(
+            Finding(
+                "source.mixed_content.protocol_relative",
+                "Protocol-relative URL-ek (HTTP-n mixed content lesz)",
+                Severity.HIGH,
+                f"{len(protocol_relative)} erőforrás protocol-relative URL-lel (`//host/...`) töltődik. "
+                f"HTTPS oldalon HTTPS-ként megy, DE ha a látogató HTTP-n érkezik a bare domain-re "
+                f"(első látogatás, lejárt HSTS, HSTS nélküli site), ezek HTTP-n töltődnek és MITM "
+                f"esetén tetszőleges JavaScript injektálható. A modern legjobb gyakorlat: explicit `https://`.",
+                "Cseréld a `//` prefixet explicit `https://`-re minden script/link/img/iframe URL-en.",
+                evidence="\n".join(protocol_relative[:10]),
                 confidence=Confidence.VERIFIED,
             )
         )
@@ -504,6 +552,39 @@ def _check_secrets(html: str, result: CheckerResult) -> None:
                 "ha kliens-szintű session/state token → OK; ha szerver-token vagy admin "
                 "claim → rotáld azonnal és töröld a HTML-ből.",
                 evidence="\n---\n".join(jwt_hint_hits),
+                confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
+            )
+        )
+
+    # Google API key (AIza) — same ambiguity as JWT. The format covers both
+    # server-side keys and publicly-visible client-side keys (Maps, YouTube,
+    # Analytics). Cannot distinguish from passive scan → HIGH + manual.
+    google_key_hits = []
+    seen_google_keys: set[str] = set()
+    for m in GOOGLE_API_KEY_RE.finditer(html):
+        key = m.group(0)
+        if key in seen_google_keys:
+            continue
+        seen_google_keys.add(key)
+        google_key_hits.append(key)
+        if len(google_key_hits) >= 10:
+            break
+    if google_key_hits:
+        result.findings.append(
+            Finding(
+                "source.secret.google_api_key_hint",
+                "Google API kulcs a HTML-ben (kézi vizsgálat szükséges)",
+                Severity.HIGH,
+                f"{len(google_key_hits)} Google API kulcs (AIza...) található a kiszolgált "
+                f"tartalomban. Ugyanaz a formátum mind a szerver-oldali kulcsokhoz (Cloud "
+                f"Storage, Vision, Translate, BigQuery), mind a kliens-oldali kulcsokhoz "
+                f"(Maps JS, YouTube Embed, Analytics). A kliens-oldali kulcsok by-design "
+                f"publikusak és a Google Cloud Console-ban domain-restriction-nel védettek. "
+                f"Passzív scan-ből nem dönthető el, hogy melyik típus.",
+                "Ellenőrizd a Google Cloud Console-ban: ha kliens-oldali, korlátozott "
+                "Maps/YouTube/Analytics kulcs → OK marad. Ha szerver-oldali (Cloud Storage, "
+                "Compute, BigQuery stb.) → azonnal rotálandó és backendbe / env változóba.",
+                evidence="\n".join(google_key_hits),
                 confidence=Confidence.REQUIRES_MANUAL_VALIDATION,
             )
         )

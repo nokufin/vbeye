@@ -5,6 +5,7 @@ import re
 import requests
 
 from vbeye import __version__
+from vbeye.bot_protection import bot_protection_error_text, is_bot_protection_host
 from vbeye.cookies import is_csrf_token_cookie, is_likely_session_cookie, iter_set_cookie_headers
 from vbeye.scoring import CheckerResult, Confidence, Finding, Severity
 
@@ -115,8 +116,8 @@ def _check_csp(h: dict) -> Finding | None:
         return Finding(
             "headers.csp.missing",
             "Content-Security-Policy hiányzik",
-            Severity.MEDIUM,
-            "Nincs CSP fejléc. Önmagában nem jelent exploit-ot, de XSS esetén nincs böngészőszintű mitigációs réteg.",
+            Severity.HIGH,
+            "Nincs CSP fejléc. XSS esetén nincs böngészőszintű mitigációs réteg — minden inline és külső script korlátlanul fut. Iparági elvárás (Mozilla Observatory -25 pont, securityheaders.com kritikus).",
             "Vezess be CSP-t legalább `default-src 'self'` alappal, és iteratív szigorítással.",
             confidence=Confidence.VERIFIED,
         )
@@ -162,8 +163,8 @@ def _check_xfo(h: dict) -> Finding | None:
         return Finding(
             "headers.xfo.missing",
             "X-Frame-Options / frame-ancestors hiányzik",
-            Severity.MEDIUM,
-            "Clickjacking elleni védelem nélkül az oldal beágyazható iframe-be.",
+            Severity.HIGH,
+            "Clickjacking elleni védelem nélkül az oldal beágyazható iframe-be — UI redress támadás, kattintás-eltérítés, kéretlen műveletek alapja. Iparági elvárás (Mozilla Observatory -20 pont).",
             "Adj hozzá `X-Frame-Options: DENY` vagy CSP `frame-ancestors 'none'` direktívát.",
             confidence=Confidence.VERIFIED,
         )
@@ -419,6 +420,18 @@ def run(url: str, timeout: int = 10) -> CheckerResult:
     result.meta["final_url"] = resp.url
     result.meta["status_code"] = resp.status_code
     result.meta["headers"] = dict(resp.headers)
+
+    # Bot-management / WAF challenge detektálás: ha cross-host redirect ismert
+    # bot-mgmt domain-re érkezik, a scan a challenge oldalt mérné — abort.
+    try:
+        from urllib.parse import urlparse as _urlparse
+        _final_host = (_urlparse(resp.url).hostname or "").lower()
+        if is_bot_protection_host(_final_host):
+            result.error = bot_protection_error_text(_final_host)
+            result.meta["blocked_by"] = _final_host
+            return result
+    except Exception:
+        pass
 
     # ha eredetileg http volt és átirányít https-re, az jó jel
     if url.startswith("http://") and resp.url.startswith("http://"):

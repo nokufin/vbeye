@@ -141,13 +141,24 @@ def compute_score(results: list[CheckerResult]) -> tuple[int, str]:
         # smaller findings.
         real_risk_penalty = 0
         capped_penalty = 0
+        high_count = 0
         for f in r.findings:
             w = SEVERITY_WEIGHT.get(f.severity, 0)
             if f.check_id in REAL_RISK_CHECK_IDS:
                 real_risk_penalty += w
             else:
                 capped_penalty += w
-        total_penalty += min(capped_penalty, ceiling) + real_risk_penalty
+            if f.severity == Severity.HIGH:
+                high_count += 1
+        # 3+ HIGH findings in a single category is a systematic posture failure,
+        # not a minor hardening gap — bypass the ceiling so the score reflects
+        # what public tools (Mozilla Observatory, securityheaders.com) show.
+        # A site that scores F on the public tools cannot present as D in vbeye
+        # just because the ceiling muted a stack of HIGH-severity gaps.
+        if high_count >= 3:
+            total_penalty += capped_penalty + real_risk_penalty
+        else:
+            total_penalty += min(capped_penalty, ceiling) + real_risk_penalty
 
     score = max(0, 100 - total_penalty)
     # Hardening-gap-only sites (no critical TLS/HTTP/secret issue, fewer than

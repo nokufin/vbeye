@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vbeye"
+dynamic = ["version"]
+description = "Passive web security assessment: HTTP security headers, TLS configuration and page source analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "nokufin" }]
+keywords = ["security", "pentest", "recon", "tls", "http-headers", "web-security", "kali"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP",
+]
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "sslyze>=6.0,<7.0",
+    "rich>=13.7",
+    "tldextract>=5.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/nokufin/vbeye"
+Issues = "https://github.com/nokufin/vbeye/issues"
+
+[project.scripts]
+vbeye = "vbeye.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "vbeye.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vbeye*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import html
+
+from vbeye import __version__
+from vbeye.engine import ScanReport
+from vbeye.scoring import CONFIDENCE_LABEL, CheckerResult, Confidence, Severity
+
+SEVERITY_ORDER = [
+    Severity.CRITICAL,
+    Severity.HIGH,
+    Severity.MEDIUM,
+    Severity.LOW,
+    Severity.INFO,
+    Severity.OK,
+]
+
+SEVERITY_LABEL = {
+    Severity.CRITICAL: "CRITICAL",
+    Severity.HIGH: "HIGH",
+    Severity.MEDIUM: "MEDIUM",
+    Severity.LOW: "LOW",
+    Severity.INFO: "INFO",
+    Severity.OK: "OK",
+}
+
+GRADE_COLOR = {
+    "A": "#16a34a",
+    "B": "#65a30d",
+    "C": "#ca8a04",
+    "D": "#ea580c",
+    "E": "#dc2626",
+    "F": "#991b1b",
+}
+
+CONFIDENCE_HELP = {
+    Confidence.VERIFIED: "directly observed in the server response",
+    Confidence.STRONG_INDICATOR: "strong signal, not direct proof",
+    Confidence.REQUIRES_MANUAL_VALIDATION: "heuristic, confirm manually",
+}
+
+CSS = """
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0; padding: 0; background: #f3f4f6; color: #111827;
+}
+header {
+  background: #0f172a; color: #f8fafc; padding: 24px 32px;
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+}
+header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+header .meta { font-size: 13px; color: #cbd5e1; }
+.score-badge {
+  margin-left: auto; display: flex; align-items: center; gap: 16px;
+  background: rgba(255,255,255,0.08); padding: 12px 20px; border-radius: 8px;
+}
+.score-grade { font-size: 42px; font-weight: 700; line-height: 1; }
+.score-num { font-size: 14px; color: #cbd5e1; }
+main { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+.summary {
+  background: white; padding: 16px 20px; border-radius: 8px; margin-bottom: 20px;
+  display: flex; gap: 12px; flex-wrap: wrap;
+}
+.summary-pill {
+  padding: 6px 12px; border-radius: 999px; font-size: 13px;
+  font-weight: 600; display: inline-flex; align-items: center; gap: 6px;
+}
+.section {
+  background: white; border-radius: 8px; margin-bottom: 16px;
+  overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.section-header {
+  padding: 14px 20px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
+  display: flex; align-items: center; gap: 12px;
+}
+.section-header h2 { margin: 0; font-size: 16px; }
+.section-meta { font-size: 12px; color: #6b7280; }
+.finding {
+  padding: 14px 20px; border-bottom: 1px solid #f3f4f6;
+}
+.finding:last-child { border-bottom: none; }
+.finding-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.finding-title { font-weight: 600; font-size: 14px; }
+.finding-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; color: #6b7280; }
+.finding-body { font-size: 13px; line-height: 1.5; color: #374151; }
+.finding-rec {
+  margin-top: 8px; padding: 10px 12px; background: #eff6ff;
+  border-left: 3px solid #3b82f6; font-size: 13px; border-radius: 0 4px 4px 0;
+}
+.finding-rec strong { color: #1e3a8a; }
+.finding-evidence {
+  margin-top: 8px; padding: 10px 12px; background: #1f2937; color: #e5e7eb;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+  border-radius: 4px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto;
+}
+.sev-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+}
+.sev-critical { background: #991b1b; color: white; }
+.sev-high     { background: #dc2626; color: white; }
+.sev-medium   { background: #ea580c; color: white; }
+.sev-low      { background: #ca8a04; color: white; }
+.sev-info     { background: #6b7280; color: white; }
+.sev-ok       { background: #16a34a; color: white; }
+.conf-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+  border: 1px solid; background: white;
+}
+.conf-verified                     { color: #15803d; border-color: #86efac; background: #f0fdf4; }
+.conf-strong_indicator             { color: #1d4ed8; border-color: #93c5fd; background: #eff6ff; }
+.conf-requires_manual_validation   { color: #92400e; border-color: #fcd34d; background: #fffbeb; }
+.error-banner {
+  padding: 12px 20px; background: #fef2f2; color: #991b1b;
+  border-left: 3px solid #dc2626; font-size: 13px;
+}
+.legend { font-size: 12px; color: #374151; }
+footer {
+  text-align: center; padding: 24px; font-size: 12px; color: #6b7280;
+}
+"""
+
+
+def _esc(s: str) -> str:
+    return html.escape(s or "", quote=True)
+
+
+def _severity_class(sev: Severity) -> str:
+    return f"sev-{sev.value}"
+
+
+def _finding_html(f) -> str:
+    rec = (
+        f'<div class="finding-rec"><strong>Recommendation:</strong> {_esc(f.recommendation)}</div>'
+        if f.recommendation else ""
+    )
+    ev = f'<div class="finding-evidence">{_esc(f.evidence)}</div>' if f.evidence else ""
+    conf = ""
+    if f.severity != Severity.OK:
+        conf = (
+            f'<span class="conf-tag conf-{f.confidence.value}" '
+            f'title="{_esc(CONFIDENCE_HELP[f.confidence])}">{CONFIDENCE_LABEL[f.confidence]}</span>'
+        )
+    return (
+        '<div class="finding">'
+        '<div class="finding-head">'
+        f'<span class="sev-tag {_severity_class(f.severity)}">{SEVERITY_LABEL[f.severity]}</span>'
+        f'{conf}'
+        f'<span class="finding-title">{_esc(f.title)}</span>'
+        f'<span class="finding-id">{_esc(f.check_id)}</span>'
+        '</div>'
+        f'<div class="finding-body">{_esc(f.description)}</div>'
+        f'{rec}{ev}'
+        '</div>'
+    )
+
+
+def _meta_html(r: CheckerResult) -> str:
+    bits = []
+    for k, v in r.meta.items():
+        if k == "headers":
+            continue
+        if isinstance(v, (list, tuple)):
+            v = ", ".join(str(x) for x in v)
+        bits.append(f"{_esc(str(k))}: {_esc(str(v)[:200])}")
+    return f'<div class="section-meta">{" · ".join(bits)}</div>' if bits else ""
+
+
+def _section_html(r: CheckerResult) -> str:
+    findings = sorted(r.findings, key=lambda f: SEVERITY_ORDER.index(f.severity))
+    body = []
+    if r.error:
+        body.append(f'<div class="error-banner"><strong>Error:</strong> {_esc(r.error)}</div>')
+    body.extend(_finding_html(f) for f in findings)
+    return (
+        '<section class="section">'
+        f'<div class="section-header"><h2>{_esc(r.name.upper())}</h2>{_meta_html(r)}</div>'
+        f'{"".join(body)}'
+        '</section>'
+    )
+
+
+def build_html(report: ScanReport) -> str:
+    score, grade = report.score, report.grade
+    counts = report.severity_counts()
+    timestamp = report.started_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    pills = [
+        f'<span class="summary-pill {_severity_class(sev)}">{SEVERITY_LABEL[sev]}: {counts[sev]}</span>'
+        for sev in SEVERITY_ORDER
+        if sev != Severity.OK and counts.get(sev)
+    ] or ['<span class="summary-pill sev-ok">No findings</span>']
+
+    legend = "&nbsp;·&nbsp;".join(
+        f'<span class="conf-tag conf-{c.value}">{CONFIDENCE_LABEL[c]}</span> {_esc(CONFIDENCE_HELP[c])}'
+        for c in Confidence
+    )
+    sections = "\n".join(_section_html(r) for r in report.results)
+    target = _esc(report.target)
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vbeye report - {target}</title>
+<style>{CSS}</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>vbeye report</h1>
+    <div class="meta">Target: <strong>{target}</strong> · Scanned: {timestamp} · Duration: {report.duration:.1f}s</div>
+  </div>
+  <div class="score-badge">
+    <div>
+      <div class="score-grade" style="color: {GRADE_COLOR.get(grade, "#6b7280")}">{grade}</div>
+      <div class="score-num">{score}/100</div>
+    </div>
+  </div>
+</header>
+<main>
+  <div class="summary">{"".join(pills)}</div>
+  <div class="summary legend"><strong>Confidence levels:</strong>&nbsp;{legend}</div>
+  {sections}
+</main>
+<footer>
+  Generated by <strong>vbeye v{__version__}</strong> - Passive Web Security Assessment
+</footer>
+</body>
+</html>
+"""
